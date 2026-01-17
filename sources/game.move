@@ -141,18 +141,16 @@ module lucky_survivor::game {
         let addr = signer::address_of(user);
         let game = borrow_global_mut<Game>(@lucky_survivor);
         assert!(game.status == STATUS_PENDING, E_GAME_NOT_PENDING);
-        assert!(!vector::contains(&game.players, &addr), E_PLAYER_ALREADY_JOINED);
-        vector::push_back(&mut game.players, addr);
-        event::emit(
-            PlayerJoined { player: addr, total_players: vector::length(&game.players) }
-        )
+        assert!(!game.players.contains(&addr), E_PLAYER_ALREADY_JOINED);
+        game.players.push_back(addr);
+        event::emit(PlayerJoined { player: addr, total_players: game.players.length() })
     }
 
-    public fun start_game(admin: &signer, round_duration_secs: u64) acquires Game {
+    public entry fun start_game(admin: &signer, round_duration_secs: u64) acquires Game {
         assert!(signer::address_of(admin) == @lucky_survivor, E_GAME_NOT_PENDING);
         let game = borrow_global_mut<Game>(@lucky_survivor);
         assert!(game.status == STATUS_PENDING, E_GAME_NOT_PENDING);
-        let num_players = vector::length(&game.players);
+        let num_players = game.players.length();
         assert!(num_players >= 5, E_NOT_ENOUGH_PLAYERS);
         game.elimination_count = num_players / 4;
         if (game.elimination_count == 0) {
@@ -247,7 +245,7 @@ module lucky_survivor::game {
     }
 
     #[randomness]
-    entry fun reveal_bomb(admin: &signer) acquires Game {
+    entry fun reveal_bombs(admin: &signer) acquires Game {
         assert!(signer::address_of(admin) == @lucky_survivor, E_GAME_NOT_PENDING);
         let game = borrow_global_mut<Game>(@lucky_survivor);
         assert!(game.status == STATUS_REVEALING, E_NOT_IN_REVEALING);

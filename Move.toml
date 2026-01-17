@@ -1,0 +1,16 @@
+[package]
+name = "LuckySurvivor"
+version = "1.0.0"
+authors = []
+edition = "2024.alpha"
+
+[addresses]
+
+[dev-addresses]
+
+[dependencies.AptosFramework]
+git = "https://github.com/aptos-labs/aptos-framework.git"
+rev = "testnet"
+subdir = "aptos-framework"
+
+[dev-dependencies]

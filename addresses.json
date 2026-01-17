@@ -1,0 +1,14 @@
+{
+  "devnet": {
+    "lucky_survivor": "0x5aeddb8d6807d0ab1ecb94bdcec2f72180cd00076660df4fe1d796524d98fe2f",
+    "deployer": "lucky-devnet"
+  },
+  "testnet": {
+    "lucky_survivor": "0xed9fe33e1551e4f7b5bbbdbec6a0f5c4b14f6fab17e9d9ac578c35e809af72b6",
+    "deployer": "lucky-testnet"
+  },
+  "mainnet": {
+    "lucky_survivor": null,
+    "deployer": null
+  }
+}

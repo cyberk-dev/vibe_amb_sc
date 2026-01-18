@@ -7,7 +7,7 @@ module lucky_survivor::game {
     use aptos_framework::event;
     use aptos_framework::timestamp;
     use aptos_framework::randomness;
-    use aptos_framework::object::Object;
+    use aptos_framework::object::{Object, Self};
     use aptos_framework::fungible_asset::Metadata;
     use lucky_survivor::vault;
     use lucky_survivor::package_manager;
@@ -56,6 +56,7 @@ module lucky_survivor::game {
         round: u8,
         status: u8,
         players: vector<address>,
+        fixed_players: vector<address>, // All joined players, never removed
         player_data: SmartTable<address, Player>,
         pending_names: SmartTable<address, String>,
         elimination_count: u64,
@@ -150,6 +151,7 @@ module lucky_survivor::game {
                 round: 0,
                 status: STATUS_PENDING,
                 players: vector::empty(),
+                fixed_players: vector::empty(),
                 player_data: smart_table::new(),
                 pending_names: smart_table::new(),
                 elimination_count: 0,
@@ -166,7 +168,9 @@ module lucky_survivor::game {
     }
 
     /// Friend function for router to set asset
-    public(friend) fun set_asset_friend(admin: &signer, metadata: Object<Metadata>) acquires Game {
+    public(friend) fun set_asset_friend(
+        admin: &signer, metadata: Object<Metadata>
+    ) acquires Game {
         ensure_admin(admin);
         let game = borrow_global_mut<Game>(@lucky_survivor);
         assert!(game.status == STATUS_PENDING, E_GAME_ALREADY_STARTED);
@@ -176,7 +180,9 @@ module lucky_survivor::game {
 
     /// Set display name before joining (can be called multiple times)
     /// Requires valid whitelist registration and code
-    public entry fun set_display_name(user: &signer, code: String, name: String) acquires Game {
+    public entry fun set_display_name(
+        user: &signer, code: String, name: String
+    ) acquires Game {
         let addr = signer::address_of(user);
 
         // Verify user is registered and code is valid
@@ -211,11 +217,11 @@ module lucky_survivor::game {
         let display_name = *game.pending_names.borrow(addr);
 
         game.players.push_back(addr);
-        game.player_data.add(addr, Player {
-            name: display_name,
-            acted: false,
-            initial_bao_id: option::none()
-        });
+        game.fixed_players.push_back(addr);
+        game.player_data.add(
+            addr,
+            Player { name: display_name, acted: false, initial_bao_id: option::none() }
+        );
 
         // Remove from pending after joining (cleanup)
         game.pending_names.remove(addr);
@@ -388,7 +394,9 @@ module lucky_survivor::game {
         assert!(game.status == STATUS_REVEALED, E_NOT_IN_REVEALED);
 
         start_voting_phase(game);
-        event::emit(RoundEnded { round: game.round, survivors_count: game.players.length() });
+        event::emit(
+            RoundEnded { round: game.round, survivors_count: game.players.length() }
+        );
     }
 
     public entry fun vote(user: &signer, choice: u8) acquires Game {
@@ -453,6 +461,7 @@ module lucky_survivor::game {
         game.round = 0;
         game.status = STATUS_PENDING;
         game.players = vector::empty();
+        game.fixed_players = vector::empty();
         game.player_data.clear();
         game.pending_names.clear();
         game.elimination_count = 0;
@@ -508,7 +517,9 @@ module lucky_survivor::game {
     }
 
     #[view]
-    public fun get_all_players_with_seats(): (vector<address>, vector<String>, vector<bool>, vector<u64>) acquires Game {
+    public fun get_all_players_with_seats(): (
+        vector<address>, vector<String>, vector<bool>, vector<u64>
+    ) acquires Game {
         let game = borrow_global<Game>(@lucky_survivor);
         let names = vector[];
         let statuses = vector[];
@@ -520,15 +531,55 @@ module lucky_survivor::game {
             let info = game.player_data.borrow(player);
             names.push_back(info.name);
             statuses.push_back(info.acted);
-            let seat = if (info.initial_bao_id.is_some()) {
-                *info.initial_bao_id.borrow()
-            } else {
-                0
-            };
+            let seat =
+                if (info.initial_bao_id.is_some()) {
+                    *info.initial_bao_id.borrow()
+                } else { 0 };
             seats.push_back(seat);
             i += 1;
         };
         (game.players, names, statuses, seats)
+    }
+
+    #[view]
+    public fun get_all_players_with_votes(): (
+        vector<address>, // addresses
+        vector<String>, // names
+        vector<u64>, // seats
+        vector<bool>, // hasVoted
+        vector<u8> // vote (0=STOP, 1=CONTINUE, 0 if not voted)
+    ) acquires Game {
+        let game = borrow_global<Game>(@lucky_survivor);
+        let names = vector[];
+        let seats = vector[];
+        let has_voted = vector[];
+        let votes = vector[];
+        let i = 0;
+        let len = game.players.length();
+        while (i < len) {
+            let player = game.players[i];
+            let info = game.player_data.borrow(player);
+            names.push_back(info.name);
+
+            // Seat
+            let seat =
+                if (info.initial_bao_id.is_some()) {
+                    *info.initial_bao_id.borrow()
+                } else { 0 };
+            seats.push_back(seat);
+
+            // Vote status
+            if (game.votes.contains(player)) {
+                has_voted.push_back(true);
+                votes.push_back(*game.votes.borrow(player));
+            } else {
+                has_voted.push_back(false);
+                votes.push_back(0);
+            };
+
+            i += 1;
+        };
+        (game.players, names, seats, has_voted, votes)
     }
 
     #[view]
@@ -657,16 +708,70 @@ module lucky_survivor::game {
                 let info = game.player_data.borrow(victim_addr);
                 names.push_back(info.name);
                 // Seat number (initial_bao_id is 0-indexed)
-                let seat = if (info.initial_bao_id.is_some()) {
-                    *info.initial_bao_id.borrow()
-                } else {
-                    0
-                };
+                let seat =
+                    if (info.initial_bao_id.is_some()) {
+                        *info.initial_bao_id.borrow()
+                    } else { 0 };
                 seats.push_back(seat);
             };
             i += 1;
         };
         (victims, names, seats)
+    }
+
+    #[view]
+    public fun get_all_players_with_prizes(): (
+        vector<address>, // addresses (all participants, join order)
+        vector<String>, // names
+        vector<u64>, // seats (initial_bao_id, 0-indexed)
+        vector<bool>, // is_eliminated
+        vector<u64> // prizes (claimable balance from vault)
+    ) acquires Game {
+        let game = borrow_global<Game>(@lucky_survivor);
+        let addresses = vector[];
+        let names = vector[];
+        let seats = vector[];
+        let eliminated = vector[];
+        let prizes = vector[];
+
+        // Get asset metadata for vault lookups (if set)
+        let has_asset = game.asset_metadata.is_some();
+        let metadata =
+            if (has_asset) {
+                *game.asset_metadata.borrow()
+            } else {
+                object::address_to_object<Metadata>(@0xa)
+            };
+
+        let i = 0;
+        let len = game.fixed_players.length();
+        while (i < len) {
+            let addr = game.fixed_players[i];
+            addresses.push_back(addr);
+
+            let info = game.player_data.borrow(addr);
+            names.push_back(info.name);
+
+            let seat =
+                if (info.initial_bao_id.is_some()) {
+                    *info.initial_bao_id.borrow()
+                } else { 0 };
+            seats.push_back(seat);
+
+            let is_out = !game.players.contains(&addr);
+            eliminated.push_back(is_out);
+
+            // Get claimable prize from vault
+            let prize =
+                if (has_asset) {
+                    vault::get_claimable_balance(addr, metadata)
+                } else { 0 };
+            prizes.push_back(prize);
+
+            i += 1;
+        };
+
+        (addresses, names, seats, eliminated, prizes)
     }
 
     fun calculate_winner_prize(game: &Game): u64 {

@@ -496,6 +496,11 @@ module lucky_survivor::game {
     }
 
     #[view]
+    public fun has_joined(player: address): bool acquires Game {
+        borrow_global<Game>(@lucky_survivor).players.contains(&player)
+    }
+
+    #[view]
     public fun get_round_prizes(): (u64, u64) acquires Game {
         let game = borrow_global<Game>(@lucky_survivor);
         let consolation_bps =

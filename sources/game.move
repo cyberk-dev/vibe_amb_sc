@@ -24,9 +24,7 @@ module lucky_survivor::game {
     const E_GAME_NOT_PENDING: u64 = 2001;
     const E_PLAYER_ALREADY_JOINED: u64 = 2002;
     const E_NOT_ENOUGH_PLAYERS: u64 = 2003;
-    const E_BAO_ALREADY_CHOSEN: u64 = 2004;
-    const E_PLAYER_ALREADY_CHOSE: u64 = 2005;
-    const E_INVALID_BAO_INDEX: u64 = 2006;
+    const E_PLAYER_ALREADY_ACTED: u64 = 2005;
     const E_ROUND_NOT_IN_SELECTION: u64 = 2007;
     const E_PLAYER_NOT_ACTIVE: u64 = 2008;
     const E_NOT_IN_REVEALING: u64 = 2009;
@@ -37,22 +35,25 @@ module lucky_survivor::game {
     const E_ASSET_NOT_SET: u64 = 2014;
     const E_GAME_ALREADY_STARTED: u64 = 2015;
     const E_INVALID_PAYMENT_ASSET: u64 = 2016;
+    const E_TARGET_NOT_ACTIVE: u64 = 2017;
 
     struct Game has key {
         round: u8,
         status: u8,
         players: vector<address>,
         elimination_count: u64,
+        // Maps bao_id -> final owner (after selection completes)
         bao_assignments: SmartTable<u64, address>,
-        player_to_bao: SmartTable<address, u64>,
+        // Maps player -> their initially assigned bao_id
+        initial_assignments: SmartTable<address, u64>,
+        // Tracks which players have acted (kept or given their bao)
+        player_actions: SmartTable<address, bool>,
         total_bao: u64,
         bomb_indices: vector<u64>,
-        round_deadline: u64,
         prize_pool: u64,
         spent_amount: u64,
         consolation_bps: vector<u64>,
         votes: SmartTable<address, u8>,
-        vote_deadline: u64,
         asset_metadata: Option<Object<Metadata>>
     }
 
@@ -66,15 +67,14 @@ module lucky_survivor::game {
     struct GameStarted has drop, store {
         round: u8,
         num_players: u64,
-        elimination_count: u64,
-        deadline: u64
+        elimination_count: u64
     }
 
     #[event]
-    struct BaoChosen has drop, store {
+    struct BaoAssigned has drop, store {
         player: address,
         bao_index: u64,
-        chosen_for: address
+        assigned_to: address
     }
 
     #[event]
@@ -100,8 +100,7 @@ module lucky_survivor::game {
     #[event]
     struct VotingStarted has drop, store {
         round: u8,
-        survivors_count: u64,
-        deadline: u64
+        survivors_count: u64
     }
 
     #[event]
@@ -129,7 +128,7 @@ module lucky_survivor::game {
     }
 
     public entry fun initialize(admin: &signer, prize_pool: u64) {
-        assert!(signer::address_of(admin) == @deployer, E_ACCESS_DENIED);
+        ensure_admin(admin);
         let resource_signer = package_manager::get_signer();
         move_to(
             &resource_signer,
@@ -139,22 +138,21 @@ module lucky_survivor::game {
                 players: vector::empty(),
                 elimination_count: 0,
                 bao_assignments: smart_table::new(),
-                player_to_bao: smart_table::new(),
+                initial_assignments: smart_table::new(),
+                player_actions: smart_table::new(),
                 total_bao: 0,
                 bomb_indices: vector::empty(),
-                round_deadline: 0,
                 prize_pool,
                 spent_amount: 0,
                 consolation_bps: vector[25, 50, 75, 100],
                 votes: smart_table::new(),
-                vote_deadline: 0,
                 asset_metadata: option::none()
             }
         );
     }
 
     public entry fun set_asset(admin: &signer, metadata: Object<Metadata>) acquires Game {
-        assert!(signer::address_of(admin) == @deployer, E_ACCESS_DENIED);
+        ensure_admin(admin);
         let game = borrow_global_mut<Game>(@lucky_survivor);
         assert!(game.status == STATUS_PENDING, E_GAME_ALREADY_STARTED);
         assert!(vault::is_valid_payment_fa(metadata), E_INVALID_PAYMENT_ASSET);
@@ -170,14 +168,14 @@ module lucky_survivor::game {
         event::emit(PlayerJoined { player: addr, total_players: game.players.length() })
     }
 
-    public entry fun start_game(admin: &signer, round_duration_secs: u64) acquires Game {
-        assert!(signer::address_of(admin) == @deployer, E_ACCESS_DENIED);
+    public entry fun start_game(admin: &signer) acquires Game {
+        ensure_admin(admin);
         let game = borrow_global_mut<Game>(@lucky_survivor);
         assert!(game.status == STATUS_PENDING, E_GAME_NOT_PENDING);
         let num_players = game.players.length();
         assert!(num_players >= 5, E_NOT_ENOUGH_PLAYERS);
-        assert!(option::is_some(&game.asset_metadata), E_ASSET_NOT_SET);
-        let metadata = *option::borrow(&game.asset_metadata);
+        assert!(game.asset_metadata.is_some(), E_ASSET_NOT_SET);
+        let metadata = *game.asset_metadata.borrow();
         assert!(
             vault::get_balance(metadata) >= game.prize_pool,
             E_INSUFFICIENT_VAULT_BALANCE
@@ -189,86 +187,59 @@ module lucky_survivor::game {
         game.round = 1;
         game.status = STATUS_SELECTION;
         game.total_bao = num_players;
-        game.round_deadline = timestamp::now_seconds() + round_duration_secs;
+
+        // Pre-assign each player their initial bao (player i gets bao i)
+        let i = 0;
+        while (i < num_players) {
+            let player = game.players[i];
+            game.initial_assignments.add(player, i);
+            i += 1;
+        };
 
         event::emit(
             GameStarted {
                 round: game.round,
                 num_players,
-                elimination_count: game.elimination_count,
-                deadline: game.round_deadline
+                elimination_count: game.elimination_count
             }
         )
     }
 
-    public entry fun choose_bao(user: &signer, bao_index: u64) acquires Game {
+    /// Assign your pre-assigned bao to a target.
+    /// If target == caller, this is "keep". If target != caller, this is "give".
+    public entry fun choose_bao(user: &signer, target: address) acquires Game {
         let addr = signer::address_of(user);
-        choose_bao_internal(addr, bao_index, addr);
-    }
-
-    public entry fun choose_bao_for_other(
-        user: &signer, bao_index: u64, target: address
-    ) acquires Game {
-        let addr = signer::address_of(user);
-        let game = borrow_global<Game>(@lucky_survivor);
-        assert!(vector::contains(&game.players, &addr), E_PLAYER_NOT_ACTIVE);
-        choose_bao_internal(addr, bao_index, target);
-    }
-
-    fun choose_bao_internal(
-        caller: address, bao_index: u64, target: address
-    ) acquires Game {
-        // check timestamp so với deadline
         let game = borrow_global_mut<Game>(@lucky_survivor);
-        assert!(game.status == STATUS_SELECTION, E_ROUND_NOT_IN_SELECTION);
-        assert!(bao_index < game.total_bao, E_INVALID_BAO_INDEX);
-        assert!(
-            !smart_table::contains(&game.bao_assignments, bao_index),
-            E_BAO_ALREADY_CHOSEN
-        );
-        assert!(vector::contains(&game.players, &target), E_PLAYER_NOT_ACTIVE);
-        assert!(
-            !smart_table::contains(&game.player_to_bao, target),
-            E_PLAYER_ALREADY_CHOSE
-        );
-        smart_table::add(&mut game.bao_assignments, bao_index, target);
-        smart_table::add(&mut game.player_to_bao, target, bao_index);
 
-        event::emit(BaoChosen { player: caller, bao_index, chosen_for: target })
+        assert!(game.status == STATUS_SELECTION, E_ROUND_NOT_IN_SELECTION);
+        assert!(game.players.contains(&addr), E_PLAYER_NOT_ACTIVE);
+        assert!(!game.player_actions.contains(addr), E_PLAYER_ALREADY_ACTED);
+        assert!(game.initial_assignments.contains(addr), E_PLAYER_NOT_ACTIVE);
+        assert!(game.players.contains(&target), E_TARGET_NOT_ACTIVE);
+
+        let bao_id = *game.initial_assignments.borrow(addr);
+        game.bao_assignments.add(bao_id, target);
+        game.player_actions.add(addr, true);
+
+        event::emit(BaoAssigned { player: addr, bao_index: bao_id, assigned_to: target })
     }
 
     public entry fun finalize_selection(admin: &signer) acquires Game {
-        assert!(signer::address_of(admin) == @deployer, E_ACCESS_DENIED);
+        ensure_admin(admin);
         let game = borrow_global_mut<Game>(@lucky_survivor);
         assert!(game.status == STATUS_SELECTION, E_ROUND_NOT_IN_SELECTION);
-        let unassigned_players = vector[];
+
+        // Auto-keep: players who haven't acted keep their own bao
         let i = 0;
         let len = game.players.length();
         while (i < len) {
             let player = game.players[i];
-            if (!game.player_to_bao.contains(player)) {
-                unassigned_players.push_back(player);
+            if (!game.player_actions.contains(player)) {
+                let bao_id = *game.initial_assignments.borrow(player);
+                game.bao_assignments.add(bao_id, player);
+                game.player_actions.add(player, true);
             };
             i += 1;
-        };
-
-        let unassigned_bao = vector[];
-        let j = 0;
-        while (j < game.total_bao) {
-            if (!game.bao_assignments.contains(j)) {
-                unassigned_bao.push_back(j);
-            };
-            j += 1;
-        };
-
-        let k = 0;
-        let min_len = min(unassigned_players.length(), unassigned_bao.length());
-        while (k < min_len) {
-            let player = unassigned_players[k];
-            let bao = unassigned_bao[k];
-            game.bao_assignments.add(bao, player);
-            game.player_to_bao.add(player, bao);
-            k += 1;
         };
 
         game.status = STATUS_REVEALING;
@@ -276,7 +247,7 @@ module lucky_survivor::game {
 
     #[randomness]
     entry fun reveal_bombs(admin: &signer) acquires Game {
-        assert!(signer::address_of(admin) == @deployer, E_ACCESS_DENIED);
+        ensure_admin(admin);
         let game = borrow_global_mut<Game>(@lucky_survivor);
         assert!(game.status == STATUS_REVEALING, E_NOT_IN_REVEALING);
 
@@ -363,7 +334,7 @@ module lucky_survivor::game {
     }
 
     public entry fun finalize_voting(admin: &signer) acquires Game {
-        assert!(signer::address_of(admin) == @deployer, E_ACCESS_DENIED);
+        ensure_admin(admin);
         let game = borrow_global_mut<Game>(@lucky_survivor);
         assert!(game.status == STATUS_VOTING, E_NOT_IN_VOTING);
 
@@ -406,22 +377,21 @@ module lucky_survivor::game {
     }
 
     public entry fun reset_game(admin: &signer) acquires Game {
-        assert!(signer::address_of(admin) == @deployer, E_ACCESS_DENIED);
+        ensure_admin(admin);
         let game = borrow_global_mut<Game>(@lucky_survivor);
         game.round = 0;
         game.status = STATUS_PENDING;
         game.players = vector::empty();
         game.elimination_count = 0;
         game.bao_assignments.clear();
-        game.player_to_bao.clear();
+        game.initial_assignments.clear();
+        game.player_actions.clear();
         game.total_bao = 0;
         game.bomb_indices = vector::empty();
-        game.round_deadline = 0;
         // Keep prize_pool unchanged (admin can modify separately)
         game.spent_amount = 0;
         // Keep consolation_bps unchanged
         game.votes.clear();
-        game.vote_deadline = 0;
 
         event::emit(GameReset { timestamp: timestamp::now_seconds() });
     }
@@ -447,21 +417,6 @@ module lucky_survivor::game {
     }
 
     #[view]
-    public fun get_bao_owner(bao_index: u64): (bool, address) acquires Game {
-        let game = borrow_global<Game>(@lucky_survivor);
-        if (game.bao_assignments.contains(bao_index)) {
-            (true, *game.bao_assignments.borrow(bao_index))
-        } else {
-            (false, @0x0)
-        }
-    }
-
-    #[view]
-    public fun get_bomb_indices(): vector<u64> acquires Game {
-        borrow_global<Game>(@lucky_survivor).bomb_indices
-    }
-
-    #[view]
     public fun get_vote(player: address): (bool, u8) acquires Game {
         let game = borrow_global<Game>(@lucky_survivor);
         if (game.votes.contains(player)) {
@@ -472,13 +427,24 @@ module lucky_survivor::game {
     }
 
     #[view]
-    public fun get_player_bao(player: address): (bool, u64) acquires Game {
+    public fun get_player_status(player: address): bool acquires Game {
+        borrow_global<Game>(@lucky_survivor).player_actions.contains(player)
+    }
+
+    #[view]
+    public fun get_player_statuses(): (vector<address>, vector<bool>) acquires Game {
         let game = borrow_global<Game>(@lucky_survivor);
-        if (game.player_to_bao.contains(player)) {
-            (true, *game.player_to_bao.borrow(player))
-        } else {
-            (false, 0)
-        }
+        let players = vector[];
+        let statuses = vector[];
+        let i = 0;
+        let len = game.players.length();
+        while (i < len) {
+            let player = game.players[i];
+            players.push_back(player);
+            statuses.push_back(game.player_actions.contains(player));
+            i += 1;
+        };
+        (players, statuses)
     }
 
     #[view]
@@ -501,12 +467,6 @@ module lucky_survivor::game {
         let game = borrow_global<Game>(@lucky_survivor);
         let consolation_bps = get_consolation_bps(round, &game.consolation_bps);
         full_math::mul_div_u64(game.prize_pool, consolation_bps, 10000)
-    }
-
-    #[view]
-    public fun get_deadlines(): (u64, u64) acquires Game {
-        let game = borrow_global<Game>(@lucky_survivor);
-        (game.round_deadline, game.vote_deadline)
     }
 
     #[view]
@@ -535,19 +495,19 @@ module lucky_survivor::game {
     }
 
     #[view]
-    public fun get_all_bao_owners(): vector<address> acquires Game {
+    public fun get_round_victims(): vector<address> acquires Game {
         let game = borrow_global<Game>(@lucky_survivor);
-        let result = vector[];
-        let i: u64 = 0;
-        while (i < game.total_bao) {
-            if (game.bao_assignments.contains(i)) {
-                result.push_back(*game.bao_assignments.borrow(i));
-            } else {
-                result.push_back(@0x0);
+        let victims = vector[];
+        let i = 0;
+        let len = game.bomb_indices.length();
+        while (i < len) {
+            let bomb_idx = game.bomb_indices[i];
+            if (game.bao_assignments.contains(bomb_idx)) {
+                victims.push_back(*game.bao_assignments.borrow(bomb_idx));
             };
             i += 1;
         };
-        result
+        victims
     }
 
     fun calculate_winner_prize(game: &Game): u64 {
@@ -557,10 +517,21 @@ module lucky_survivor::game {
 
     fun setup_next_round(game: &mut Game) {
         game.bao_assignments.clear();
-        game.player_to_bao.clear();
+        game.initial_assignments.clear();
+        game.player_actions.clear();
         game.bomb_indices = vector[];
         game.round += 1;
         game.total_bao = game.players.length();
+
+        // Re-assign initial baos for the new round
+        let i: u64 = 0;
+        let len = game.players.length();
+        while (i < len) {
+            let player = game.players[i];
+            game.initial_assignments.add(player, i);
+            i += 1;
+        };
+
         game.status = STATUS_SELECTION;
     }
 
@@ -588,15 +559,10 @@ module lucky_survivor::game {
         }
     }
 
-    fun min(a: u64, b: u64): u64 {
-        if (a < b) { a }
-        else { b }
-    }
-
     fun split_prize_equally(game: &Game) {
         let count = game.players.length();
         if (count == 0) return;
-        let metadata = *option::borrow(&game.asset_metadata);
+        let metadata = *game.asset_metadata.borrow();
         let remaining = game.prize_pool - game.spent_amount;
         let per_person = remaining / count;
         let i = 0;
@@ -610,16 +576,15 @@ module lucky_survivor::game {
 
     fun start_voting_phase(game: &mut Game) {
         game.votes.clear();
-        game.vote_deadline = timestamp::now_seconds() + 60;
         game.status = STATUS_VOTING;
 
         event::emit(
-            VotingStarted {
-                round: game.round,
-                survivors_count: game.players.length(),
-                deadline: game.vote_deadline
-            }
+            VotingStarted { round: game.round, survivors_count: game.players.length() }
         )
+    }
+
+    inline fun ensure_admin(admin: &signer) {
+        assert!(signer::address_of(admin) == @deployer, E_ACCESS_DENIED);
     }
 
     #[test_only]
@@ -643,6 +608,12 @@ module lucky_survivor::game {
     public fun set_players_for_test(players: vector<address>) acquires Game {
         let game = borrow_global_mut<Game>(@lucky_survivor);
         game.players = players;
+    }
+
+    #[test_only]
+    #[lint::allow_unsafe_randomness]
+    public entry fun reveal_bombs_for_test(admin: &signer) acquires Game {
+        reveal_bombs(admin);
     }
 }
 

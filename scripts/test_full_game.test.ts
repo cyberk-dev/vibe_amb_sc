@@ -42,7 +42,7 @@ describe("Lucky Survivor - Full Game Flow", () => {
   });
 
   it("should start game", async () => {
-    await transactionHelpers.executeEntry(admin, "start_game", [120]);
+    await transactionHelpers.executeEntry(admin, "start_game");
     const [status] = await transactionHelpers.view("get_status");
     const [round] = await transactionHelpers.view("get_round");
     const [eliminationCount] = await transactionHelpers.view("get_elimination_count");
@@ -52,20 +52,21 @@ describe("Lucky Survivor - Full Game Flow", () => {
     expect(Number(eliminationCount)).toBe(1);
   });
 
-  it("should return valid deadlines after game start", async () => {
-    const [roundDeadline, voteDeadline] = await transactionHelpers.view("get_deadlines");
-    expect(Number(roundDeadline)).toBeGreaterThan(0);
-    expect(Number(voteDeadline)).toBe(0);
-  });
-
-  it("should choose bao and finalize selection", async () => {
-    for (let i = 0; i < players.length; i++) {
-      await transactionHelpers.executeWithFeePayer(players[i]!, admin, "choose_bao", [i]);
+  it("should choose bao (keep) and finalize selection", async () => {
+    // Each player keeps their pre-assigned bao (target = self)
+    for (const player of players) {
+      await transactionHelpers.executeWithFeePayer(
+        player,
+        admin,
+        "choose_bao",
+        [player.accountAddress.toString()]
+      );
     }
 
-    const [baoOwners] = await transactionHelpers.view("get_all_bao_owners");
-    expect((baoOwners as string[]).length).toBe(5);
-    expect((baoOwners as string[]).every(addr => addr !== "0x0")).toBe(true);
+    // Verify all players have acted using get_player_statuses
+    const [addresses, statuses] = await transactionHelpers.view("get_player_statuses");
+    expect((addresses as string[]).length).toBe(5);
+    expect((statuses as boolean[]).every(s => s === true)).toBe(true);
 
     await transactionHelpers.executeEntry(admin, "finalize_selection");
     const [status] = await transactionHelpers.view("get_status");
@@ -76,10 +77,10 @@ describe("Lucky Survivor - Full Game Flow", () => {
     await transactionHelpers.executeEntry(admin, "reveal_bombs");
 
     const [status] = await transactionHelpers.view("get_status");
-    const [bombIndices] = await transactionHelpers.view("get_bomb_indices");
+    const [victims] = await transactionHelpers.view("get_round_victims");
     const [survivorCount] = await transactionHelpers.view("get_players_count");
 
-    expect((bombIndices as number[]).length).toBe(1);
+    expect((victims as string[]).length).toBe(1); // elimination_count == 1
     expect(Number(survivorCount)).toBe(4);
     expect([GameStatus.VOTING, GameStatus.ENDED]).toContain(Number(status));
   });
@@ -94,9 +95,6 @@ describe("Lucky Survivor - Full Game Flow", () => {
     expect(Number(stopCount)).toBe(0);
     expect(Number(continueCount)).toBe(0);
     expect(Number(missingCount)).toBe(Number(survivorCount));
-
-    const [, voteDeadline] = await transactionHelpers.view("get_deadlines");
-    expect(Number(voteDeadline)).toBeGreaterThan(0);
   });
 
   it("should allow survivors to vote", async () => {

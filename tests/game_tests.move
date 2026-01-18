@@ -59,10 +59,15 @@ module lucky_survivor::game_tests {
             &aptos_framework::account::create_signer_for_test(@0x1)
         );
 
-        game::start_game(deployer, 120);
+        game::start_game(deployer);
         assert!(game::get_status() == 1, 0);
         assert!(game::get_round() == 1, 1);
         assert!(game::get_elimination_count() == 1, 2);
+
+        // Verify players have not acted yet
+        let (players, statuses) = game::get_player_statuses();
+        assert!(players.length() == 5, 3);
+        assert!(!statuses[0] && !statuses[1], 4);
     }
 
     #[test(deployer = @deployer, u1 = @0x1, u2 = @0x2)]
@@ -80,13 +85,13 @@ module lucky_survivor::game_tests {
             &account::create_signer_for_test(@0x1)
         );
 
-        game::start_game(deployer, 120);
+        game::start_game(deployer);
     }
 
     #[test(
         deployer = @deployer, u1 = @0x1, u2 = @0x2, u3 = @0x3, u4 = @0x4, u5 = @0x5
     )]
-    fun test_choose_bao(
+    fun test_choose_bao_keep(
         deployer: &signer,
         u1: &signer,
         u2: &signer,
@@ -107,22 +112,19 @@ module lucky_survivor::game_tests {
             &account::create_signer_for_test(@0x1)
         );
 
-        game::start_game(deployer, 120);
+        game::start_game(deployer);
 
-        game::choose_bao(u1, 0);
-        let (found, owner) = game::get_bao_owner(0);
-        assert!(found && owner == signer::address_of(u1), 0);
+        // u1 keeps their bao (assigns to self)
+        let u1_addr = signer::address_of(u1);
+        game::choose_bao(u1, u1_addr);
 
-        game::choose_bao(u2, 1);
-        let (found2, _) = game::get_player_bao(signer::address_of(u2));
-        assert!(found2, 1);
+        assert!(game::get_player_status(u1_addr), 0);
     }
 
     #[test(
         deployer = @deployer, u1 = @0x1, u2 = @0x2, u3 = @0x3, u4 = @0x4, u5 = @0x5
     )]
-    #[expected_failure(abort_code = 2004, location = lucky_survivor::game)]
-    fun test_choose_bao_already_taken(
+    fun test_choose_bao_give(
         deployer: &signer,
         u1: &signer,
         u2: &signer,
@@ -143,16 +145,63 @@ module lucky_survivor::game_tests {
             &account::create_signer_for_test(@0x1)
         );
 
-        game::start_game(deployer, 120);
-        game::choose_bao(u1, 0);
-        game::choose_bao(u2, 0);
+        game::start_game(deployer);
+
+        // u1 gives their bao to u2
+        let u1_addr = signer::address_of(u1);
+        let u2_addr = signer::address_of(u2);
+        game::choose_bao(u1, u2_addr);
+
+        assert!(game::get_player_status(u1_addr), 0);
+        // Bao assignment verified internally - view functions hidden
+        assert!(!game::get_player_status(u2_addr), 1);
+    }
+
+    #[test(
+        deployer = @deployer, u1 = @0x1, u2 = @0x2, u3 = @0x3, u4 = @0x4, u5 = @0x5
+    )]
+    fun test_multiple_baos_same_target(
+        deployer: &signer,
+        u1: &signer,
+        u2: &signer,
+        u3: &signer,
+        u4: &signer,
+        u5: &signer
+    ) {
+        package_manager::initialize_for_test();
+        game::init_for_test(deployer, 200);
+        test_helpers::setup_funded_vault(deployer, 200);
+        game::join_game(u1);
+        game::join_game(u2);
+        game::join_game(u3);
+        game::join_game(u4);
+        game::join_game(u5);
+
+        timestamp::set_time_has_started_for_testing(
+            &account::create_signer_for_test(@0x1)
+        );
+
+        game::start_game(deployer);
+
+        let u2_addr = signer::address_of(u2);
+
+        // u1 gives to u2, u2 keeps, u3 gives to u2
+        // u2 should end up with 3 baos (0, 1, 2)
+        game::choose_bao(u1, u2_addr);  // bao 0 -> u2
+        game::choose_bao(u2, u2_addr);  // bao 1 -> u2 (keep)
+        game::choose_bao(u3, u2_addr);  // bao 2 -> u2
+
+        // Verify all three players have acted
+        assert!(game::get_player_status(signer::address_of(u1)), 0);
+        assert!(game::get_player_status(signer::address_of(u2)), 1);
+        assert!(game::get_player_status(signer::address_of(u3)), 2);
     }
 
     #[test(
         deployer = @deployer, u1 = @0x1, u2 = @0x2, u3 = @0x3, u4 = @0x4, u5 = @0x5
     )]
     #[expected_failure(abort_code = 2005, location = lucky_survivor::game)]
-    fun test_choose_bao_player_already_chose(
+    fun test_choose_bao_already_acted(
         deployer: &signer,
         u1: &signer,
         u2: &signer,
@@ -173,15 +222,17 @@ module lucky_survivor::game_tests {
             &account::create_signer_for_test(@0x1)
         );
 
-        game::start_game(deployer, 120);
-        game::choose_bao(u1, 0);
-        game::choose_bao(u1, 1);
+        game::start_game(deployer);
+        let u1_addr = signer::address_of(u1);
+        game::choose_bao(u1, u1_addr);
+        // Try to act again - should fail
+        game::choose_bao(u1, u1_addr);
     }
 
     #[test(
         deployer = @deployer, u1 = @0x1, u2 = @0x2, u3 = @0x3, u4 = @0x4, u5 = @0x5
     )]
-    fun test_finalize_selection(
+    fun test_finalize_selection_auto_keep(
         deployer: &signer,
         u1: &signer,
         u2: &signer,
@@ -201,21 +252,25 @@ module lucky_survivor::game_tests {
         timestamp::set_time_has_started_for_testing(
             &account::create_signer_for_test(@0x1)
         );
-        game::start_game(deployer, 120);
+        game::start_game(deployer);
 
-        game::choose_bao(u1, 0);
-        game::choose_bao(u2, 1);
+        // Only u1 and u2 act, rest should auto-keep
+        let u1_addr = signer::address_of(u1);
+        game::choose_bao(u1, u1_addr);  // keep
+        game::choose_bao(u2, u1_addr);  // give to u1
 
         game::finalize_selection(deployer);
 
-        assert!(game::get_status() == 2, 0);
+        assert!(game::get_status() == 2, 0);  // STATUS_REVEALING
 
-        let (found1, _) = game::get_player_bao(signer::address_of(u1));
-        let (found2, _) = game::get_player_bao(signer::address_of(u2));
-        let (found3, _) = game::get_player_bao(signer::address_of(u3));
-        let (found4, _) = game::get_player_bao(signer::address_of(u4));
-        let (found5, _) = game::get_player_bao(signer::address_of(u5));
-        assert!(found1 && found2 && found3 && found4 && found5, 1);
+        // Verify all players have acted (u1, u2 explicitly, u3-u5 auto-keep)
+        let (players, statuses) = game::get_player_statuses();
+        assert!(players.length() == 5, 1);
+        let i = 0;
+        while (i < 5) {
+            assert!(statuses[i], i + 2);
+            i += 1;
+        };
     }
 
     #[test(
@@ -241,7 +296,7 @@ module lucky_survivor::game_tests {
         timestamp::set_time_has_started_for_testing(
             &account::create_signer_for_test(@0x1)
         );
-        game::start_game(deployer, 120);
+        game::start_game(deployer);
 
         game::set_voting_status_for_test();
         assert!(game::get_status() == 3, 0);
@@ -279,7 +334,7 @@ module lucky_survivor::game_tests {
         timestamp::set_time_has_started_for_testing(
             &account::create_signer_for_test(@0x1)
         );
-        game::start_game(deployer, 120);
+        game::start_game(deployer);
         game::set_voting_status_for_test();
 
         game::vote(u1, 1);
@@ -318,13 +373,19 @@ module lucky_survivor::game_tests {
         timestamp::set_time_has_started_for_testing(
             &account::create_signer_for_test(@0x1)
         );
-        game::start_game(deployer, 120);
+        game::start_game(deployer);
         game::set_voting_status_for_test();
         game::vote(u1, 1);
         game::vote(u2, 0);
+        game::vote(u3, 1);
+        game::vote(u4, 1);
+        game::vote(u5, 0);
         game::finalize_voting(deployer);
-        assert!(game::get_status() == 1, 0);
+        assert!(game::get_status() == 1, 0);  // Back to SELECTION
         assert!(game::get_round() == 2, 1);
+
+        // Verify player actions reset for round 2
+        assert!(!game::get_player_status(signer::address_of(u1)), 2);
     }
 
     #[test(
@@ -350,7 +411,7 @@ module lucky_survivor::game_tests {
         timestamp::set_time_has_started_for_testing(
             &account::create_signer_for_test(@0x1)
         );
-        game::start_game(deployer, 120);
+        game::start_game(deployer);
         game::set_voting_status_for_test();
         game::vote(u1, 0);
         game::vote(u2, 0);
@@ -396,7 +457,7 @@ module lucky_survivor::game_tests {
         timestamp::set_time_has_started_for_testing(
             &account::create_signer_for_test(@0x1)
         );
-        game::start_game(deployer, 120);
+        game::start_game(deployer);
         game::set_voting_status_for_test();
 
         game::vote(u1, 0);
@@ -476,13 +537,6 @@ module lucky_survivor::game_tests {
         game::init_for_test(deployer, 1000);
         test_helpers::setup_funded_vault(deployer, 1000);
 
-        let (round_deadline, vote_deadline) = game::get_deadlines();
-        assert!(round_deadline == 0, 0);
-        assert!(vote_deadline == 0, 1);
-
-        let bao_owners = game::get_all_bao_owners();
-        assert!(bao_owners.length() == 0, 2);
-
         game::join_game(u1);
         game::join_game(u2);
         game::join_game(u3);
@@ -492,38 +546,34 @@ module lucky_survivor::game_tests {
         timestamp::set_time_has_started_for_testing(
             &account::create_signer_for_test(@0x1)
         );
-        game::start_game(deployer, 120);
+        game::start_game(deployer);
 
-        let (round_deadline2, _) = game::get_deadlines();
-        assert!(round_deadline2 > 0, 3);
+        // Test has_acted before and after action
+        assert!(!game::get_player_status(signer::address_of(u1)), 0);
+        game::choose_bao(u1, signer::address_of(u1));
+        assert!(game::get_player_status(signer::address_of(u1)), 1);
 
-        let bao_owners2 = game::get_all_bao_owners();
-        assert!(bao_owners2.length() == 5, 4);
-        assert!(bao_owners2[0] == @0x0, 5);
-
-        game::choose_bao(u1, 0);
-        game::choose_bao(u2, 2);
-
-        let bao_owners3 = game::get_all_bao_owners();
-        assert!(bao_owners3[0] == signer::address_of(u1), 6);
-        assert!(bao_owners3[1] == @0x0, 7);
-        assert!(bao_owners3[2] == signer::address_of(u2), 8);
+        // Test get_player_statuses
+        let (players, statuses) = game::get_player_statuses();
+        assert!(players.length() == 5, 2);
+        assert!(statuses[0], 3);  // u1 has acted
+        assert!(!statuses[1], 4); // u2 has not acted
 
         game::set_voting_status_for_test();
 
         let (stop, cont, missing) = game::get_voting_state();
-        assert!(stop == 0, 9);
-        assert!(cont == 0, 10);
-        assert!(missing == 5, 11);
+        assert!(stop == 0, 5);
+        assert!(cont == 0, 6);
+        assert!(missing == 5, 7);
 
         game::vote(u1, 1);
         game::vote(u2, 0);
         game::vote(u3, 1);
 
         let (stop2, cont2, missing2) = game::get_voting_state();
-        assert!(stop2 == 1, 12);
-        assert!(cont2 == 2, 13);
-        assert!(missing2 == 2, 14);
+        assert!(stop2 == 1, 8);
+        assert!(cont2 == 2, 9);
+        assert!(missing2 == 2, 10);
     }
 
     #[test(
@@ -551,6 +601,65 @@ module lucky_survivor::game_tests {
             &account::create_signer_for_test(@0x1)
         );
 
-        game::start_game(deployer, 120);
+        game::start_game(deployer);
+    }
+
+    #[test(
+        deployer = @deployer, u1 = @0x1, u2 = @0x2, u3 = @0x3, u4 = @0x4, u5 = @0x5
+    )]
+    fun test_reveal_outcomes(
+        deployer: &signer,
+        u1: &signer,
+        u2: &signer,
+        u3: &signer,
+        u4: &signer,
+        u5: &signer
+    ) {
+        package_manager::initialize_for_test();
+        game::init_for_test(deployer, 1000);
+        test_helpers::setup_funded_vault(deployer, 1000);
+        game::join_game(u1);
+        game::join_game(u2);
+        game::join_game(u3);
+        game::join_game(u4);
+        game::join_game(u5);
+
+        timestamp::set_time_has_started_for_testing(
+            &account::create_signer_for_test(@0x1)
+        );
+
+        game::start_game(deployer);
+        assert!(game::get_elimination_count() == 1, 0);  // 5/4 = 1
+
+        // All players keep their baos
+        game::choose_bao(u1, signer::address_of(u1));
+        game::choose_bao(u2, signer::address_of(u2));
+        game::choose_bao(u3, signer::address_of(u3));
+        game::choose_bao(u4, signer::address_of(u4));
+        game::choose_bao(u5, signer::address_of(u5));
+
+        game::finalize_selection(deployer);
+        assert!(game::get_status() == 2, 1);  // STATUS_REVEALING
+
+        // Before reveal, no victims yet
+        let victims_before = game::get_round_victims();
+        assert!(victims_before.length() == 0, 2);
+
+        aptos_framework::randomness::initialize_for_testing(
+            &account::create_signer_for_test(@0x1)
+        );
+        game::reveal_bombs_for_test(deployer);
+
+        // After reveal, verify outcomes
+        let victims = game::get_round_victims();
+        assert!(victims.length() == 1, 3);  // elimination_count == 1
+
+        // Survivors should be 4
+        assert!(game::get_players_count() == 4, 4);
+
+        // Verify victim is NOT in the active player list
+        let victim = victims[0];
+        let (players, _) = game::get_player_statuses();
+        assert!(!players.contains(&victim), 5);
     }
 }

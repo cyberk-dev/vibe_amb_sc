@@ -40,8 +40,9 @@ module lucky_survivor::game_tests {
         let addr = signer::address_of(user1);
         whitelist::register(user1);
         let code = whitelist::get_invite_code(addr);
-        game::join_game(user1, code, std::string::utf8(b"Player1"));
-        game::join_game(user1, code, std::string::utf8(b"Player1")); // Should fail
+        game::set_display_name(user1, code, std::string::utf8(b"Player1"));
+        game::join_game(user1, code);
+        game::join_game(user1, code); // Should fail
     }
 
     #[test(

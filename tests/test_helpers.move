@@ -76,7 +76,8 @@ module lucky_survivor::test_helpers {
         whitelist::register(user);
         let code = whitelist::get_invite_code(addr);
         let name = generate_player_name(addr);
-        game::join_game(user, code, name);
+        game::set_display_name(user, code, name);
+        game::join_game(user, code);
     }
 
     /// Register a user and join game with custom name
@@ -84,7 +85,8 @@ module lucky_survivor::test_helpers {
         let addr = signer::address_of(user);
         whitelist::register(user);
         let code = whitelist::get_invite_code(addr);
-        game::join_game(user, code, name);
+        game::set_display_name(user, code, name);
+        game::join_game(user, code);
     }
 
     /// Generate a simple player name from address

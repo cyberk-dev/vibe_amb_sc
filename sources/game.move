@@ -42,6 +42,7 @@ module lucky_survivor::game {
     const E_TARGET_NOT_ACTIVE: u64 = 2017;
     const E_NOT_REGISTERED: u64 = 2018;
     const E_INVALID_CODE: u64 = 2019;
+    const E_NAME_NOT_SET: u64 = 2020;
 
     struct Player has store, drop, copy {
         name: String,
@@ -54,6 +55,7 @@ module lucky_survivor::game {
         status: u8,
         players: vector<address>,
         player_data: SmartTable<address, Player>,
+        pending_names: SmartTable<address, String>,
         elimination_count: u64,
         // Maps bao_id -> final owner (after selection completes)
         bao_assignments: SmartTable<u64, address>,
@@ -147,6 +149,7 @@ module lucky_survivor::game {
                 status: STATUS_PENDING,
                 players: vector::empty(),
                 player_data: smart_table::new(),
+                pending_names: smart_table::new(),
                 elimination_count: 0,
                 bao_assignments: smart_table::new(),
                 total_bao: 0,
@@ -169,7 +172,26 @@ module lucky_survivor::game {
         game.asset_metadata = option::some(metadata);
     }
 
-    public entry fun join_game(user: &signer, code: String, display_name: String) acquires Game {
+    /// Set display name before joining (can be called multiple times)
+    /// Requires valid whitelist registration and code
+    public entry fun set_display_name(user: &signer, code: String, name: String) acquires Game {
+        let addr = signer::address_of(user);
+
+        // Verify user is registered and code is valid
+        assert!(whitelist::is_registered(addr), E_NOT_REGISTERED);
+        assert!(whitelist::verify_code(addr, code), E_INVALID_CODE);
+
+        let game = borrow_global_mut<Game>(@lucky_survivor);
+
+        // Set or update pending name (allows multiple updates)
+        if (game.pending_names.contains(addr)) {
+            *game.pending_names.borrow_mut(addr) = name;
+        } else {
+            game.pending_names.add(addr, name);
+        };
+    }
+
+    public entry fun join_game(user: &signer, code: String) acquires Game {
         let addr = signer::address_of(user);
 
         // Verify user is registered in whitelist
@@ -182,12 +204,19 @@ module lucky_survivor::game {
         assert!(game.status == STATUS_PENDING, E_GAME_NOT_PENDING);
         assert!(!game.players.contains(&addr), E_PLAYER_ALREADY_JOINED);
 
+        // MUST have set name first
+        assert!(game.pending_names.contains(addr), E_NAME_NOT_SET);
+        let display_name = *game.pending_names.borrow(addr);
+
         game.players.push_back(addr);
         game.player_data.add(addr, Player {
             name: display_name,
             acted: false,
             initial_bao_id: option::none()
         });
+
+        // Remove from pending after joining (cleanup)
+        game.pending_names.remove(addr);
 
         event::emit(PlayerJoined { player: addr, total_players: game.players.length() })
     }
@@ -413,6 +442,7 @@ module lucky_survivor::game {
         game.status = STATUS_PENDING;
         game.players = vector::empty();
         game.player_data.clear();
+        game.pending_names.clear();
         game.elimination_count = 0;
         game.bao_assignments.clear();
         game.total_bao = 0;
@@ -498,6 +528,20 @@ module lucky_survivor::game {
     #[view]
     public fun has_joined(player: address): bool acquires Game {
         borrow_global<Game>(@lucky_survivor).players.contains(&player)
+    }
+
+    #[view]
+    public fun get_pending_name(player: address): String acquires Game {
+        let game = borrow_global<Game>(@lucky_survivor);
+        assert!(game.pending_names.contains(player), E_NAME_NOT_SET);
+        *game.pending_names.borrow(player)
+    }
+
+    #[view]
+    public fun has_pending_name(player: address): bool acquires Game {
+        if (!exists<Game>(@lucky_survivor)) return false;
+        let game = borrow_global<Game>(@lucky_survivor);
+        game.pending_names.contains(player)
     }
 
     #[view]

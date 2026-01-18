@@ -6,6 +6,8 @@ module lucky_survivor::game {
     use aptos_framework::timestamp;
     use aptos_framework::randomness;
     use lucky_survivor::vault;
+    use lucky_survivor::package_manager;
+    use lucky_survivor::full_math;
 
     const STATUS_PENDING: u8 = 0;
     const STATUS_SELECTION: u8 = 1;
@@ -27,6 +29,7 @@ module lucky_survivor::game {
     const E_NOT_IN_REVEALING: u64 = 2009;
     const E_NOT_IN_VOTING: u64 = 2010;
     const E_ALREADY_VOTED: u64 = 2011;
+    const E_ACCESS_DENIED: u64 = 2012;
 
     struct Game has key {
         round: u8,
@@ -39,6 +42,7 @@ module lucky_survivor::game {
         bomb_indices: vector<u64>,
         round_deadline: u64,
         prize_pool: u64,
+        spent_amount: u64,
         consolation_bps: vector<u64>,
         votes: SmartTable<address, u8>,
         vote_deadline: u64
@@ -117,8 +121,10 @@ module lucky_survivor::game {
     }
 
     public entry fun initialize(admin: &signer, prize_pool: u64) {
+        assert!(signer::address_of(admin) == @deployer, E_ACCESS_DENIED);
+        let resource_signer = package_manager::get_signer();
         move_to(
-            admin,
+            &resource_signer,
             Game {
                 round: 0,
                 status: STATUS_PENDING,
@@ -130,6 +136,7 @@ module lucky_survivor::game {
                 bomb_indices: vector::empty(),
                 round_deadline: 0,
                 prize_pool,
+                spent_amount: 0,
                 consolation_bps: vector[25, 50, 75, 100],
                 votes: smart_table::new(),
                 vote_deadline: 0
@@ -147,7 +154,7 @@ module lucky_survivor::game {
     }
 
     public entry fun start_game(admin: &signer, round_duration_secs: u64) acquires Game {
-        assert!(signer::address_of(admin) == @lucky_survivor, E_GAME_NOT_PENDING);
+        assert!(signer::address_of(admin) == @deployer, E_ACCESS_DENIED);
         let game = borrow_global_mut<Game>(@lucky_survivor);
         assert!(game.status == STATUS_PENDING, E_GAME_NOT_PENDING);
         let num_players = game.players.length();
@@ -208,7 +215,7 @@ module lucky_survivor::game {
     }
 
     public entry fun finalize_selection(admin: &signer) acquires Game {
-        assert!(signer::address_of(admin) == @lucky_survivor, E_GAME_NOT_PENDING);
+        assert!(signer::address_of(admin) == @deployer, E_ACCESS_DENIED);
         let game = borrow_global_mut<Game>(@lucky_survivor);
         assert!(game.status == STATUS_SELECTION, E_ROUND_NOT_IN_SELECTION);
         let unassigned_players = vector[];
@@ -246,7 +253,7 @@ module lucky_survivor::game {
 
     #[randomness]
     entry fun reveal_bombs(admin: &signer) acquires Game {
-        assert!(signer::address_of(admin) == @lucky_survivor, E_GAME_NOT_PENDING);
+        assert!(signer::address_of(admin) == @deployer, E_ACCESS_DENIED);
         let game = borrow_global_mut<Game>(@lucky_survivor);
         assert!(game.status == STATUS_REVEALING, E_NOT_IN_REVEALING);
 
@@ -276,7 +283,8 @@ module lucky_survivor::game {
         game.bomb_indices = bombs;
 
         let consolation_bps = get_consolation_bps(game.round, &game.consolation_bps);
-        let consolation_amount = game.prize_pool * consolation_bps / 10000;
+        let consolation_amount =
+            full_math::mul_div_u64(game.prize_pool, consolation_bps, 10000);
 
         let eliminated = vector[];
         let j = 0;
@@ -286,6 +294,7 @@ module lucky_survivor::game {
             eliminated.push_back(victim);
 
             vault::record_prize(victim, consolation_amount);
+            game.spent_amount = game.spent_amount + consolation_amount;
             j += 1;
         };
 
@@ -330,7 +339,7 @@ module lucky_survivor::game {
     }
 
     public entry fun finalize_voting(admin: &signer) acquires Game {
-        assert!(signer::address_of(admin) == @lucky_survivor, E_GAME_NOT_PENDING);
+        assert!(signer::address_of(admin) == @deployer, E_ACCESS_DENIED);
         let game = borrow_global_mut<Game>(@lucky_survivor);
         assert!(game.status == STATUS_VOTING, E_NOT_IN_VOTING);
 
@@ -373,7 +382,7 @@ module lucky_survivor::game {
     }
 
     public entry fun reset_game(admin: &signer) acquires Game {
-        assert!(signer::address_of(admin) == @lucky_survivor, E_GAME_NOT_PENDING);
+        assert!(signer::address_of(admin) == @deployer, E_ACCESS_DENIED);
         let game = borrow_global_mut<Game>(@lucky_survivor);
         game.round = 0;
         game.status = STATUS_PENDING;
@@ -385,6 +394,7 @@ module lucky_survivor::game {
         game.bomb_indices = vector::empty();
         game.round_deadline = 0;
         // Keep prize_pool unchanged (admin can modify separately)
+        game.spent_amount = 0;
         // Keep consolation_bps unchanged
         game.votes.clear();
         game.vote_deadline = 0;
@@ -447,9 +457,78 @@ module lucky_survivor::game {
         }
     }
 
+    #[view]
+    public fun get_round_prizes(): (u64, u64) acquires Game {
+        let game = borrow_global<Game>(@lucky_survivor);
+        let consolation_bps =
+            if (game.round == 0) {
+                game.consolation_bps[0]
+            } else {
+                get_consolation_bps(game.round, &game.consolation_bps)
+            };
+        let consolation_prize =
+            full_math::mul_div_u64(game.prize_pool, consolation_bps, 10000);
+        let remaining_pool = game.prize_pool - game.spent_amount;
+        (consolation_prize, remaining_pool)
+    }
+
+    #[view]
+    public fun get_consolation_prize_for_round(round: u8): u64 acquires Game {
+        let game = borrow_global<Game>(@lucky_survivor);
+        let consolation_bps = get_consolation_bps(round, &game.consolation_bps);
+        full_math::mul_div_u64(game.prize_pool, consolation_bps, 10000)
+    }
+
+    #[view]
+    public fun get_deadlines(): (u64, u64) acquires Game {
+        let game = borrow_global<Game>(@lucky_survivor);
+        (game.round_deadline, game.vote_deadline)
+    }
+
+    #[view]
+    public fun get_voting_state(): (u64, u64, u64) acquires Game {
+        let game = borrow_global<Game>(@lucky_survivor);
+        let stop_count: u64 = 0;
+        let continue_count: u64 = 0;
+        let missing_count: u64 = 0;
+        let i = 0;
+        let len = game.players.length();
+        while (i < len) {
+            let player = game.players[i];
+            if (game.votes.contains(player)) {
+                let v = *game.votes.borrow(player);
+                if (v == VOTE_CONTINUE) {
+                    continue_count += 1;
+                } else {
+                    stop_count += 1;
+                };
+            } else {
+                missing_count += 1;
+            };
+            i += 1;
+        };
+        (stop_count, continue_count, missing_count)
+    }
+
+    #[view]
+    public fun get_all_bao_owners(): vector<address> acquires Game {
+        let game = borrow_global<Game>(@lucky_survivor);
+        let result = vector[];
+        let i: u64 = 0;
+        while (i < game.total_bao) {
+            if (game.bao_assignments.contains(i)) {
+                result.push_back(*game.bao_assignments.borrow(i));
+            } else {
+                result.push_back(@0x0);
+            };
+            i += 1;
+        };
+        result
+    }
+
     fun calculate_winner_prize(game: &Game): u64 {
-        // Simplified: ~75% of pool (actual should track spent)
-        game.prize_pool * 75 / 100
+        // Return remaining prize after consolation payments
+        game.prize_pool - game.spent_amount
     }
 
     fun setup_next_round(game: &mut Game) {
@@ -493,7 +572,7 @@ module lucky_survivor::game {
     fun split_prize_equally(game: &Game) {
         let count = game.players.length();
         if (count == 0) return;
-        let remaining = game.prize_pool * 75 / 100;
+        let remaining = game.prize_pool - game.spent_amount;
         let per_person = remaining / count;
         let i = 0;
         while (i < count) {
@@ -527,6 +606,12 @@ module lucky_survivor::game {
     public fun set_voting_status_for_test() acquires Game {
         let game = borrow_global_mut<Game>(@lucky_survivor);
         game.status = STATUS_VOTING;
+    }
+
+    #[test_only]
+    public fun set_players_for_test(players: vector<address>) acquires Game {
+        let game = borrow_global_mut<Game>(@lucky_survivor);
+        game.players = players;
     }
 }
 

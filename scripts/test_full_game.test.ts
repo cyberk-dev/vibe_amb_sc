@@ -1,5 +1,6 @@
 import { Account } from "@aptos-labs/ts-sdk";
 import { accountHelpers, transactionHelpers } from "./test-helpers";
+import { VAULT_MODULE } from "./CONFIG";
 
 const GameStatus = {
   PENDING: 0,
@@ -9,19 +10,25 @@ const GameStatus = {
   ENDED: 4,
 };
 
+const VoteChoice = {
+  STOP: 0,
+  CONTINUE: 1,
+};
+
 describe("Lucky Survivor - Full Game Flow", () => {
   let admin: Account;
   let players: Account[];
+  let survivingPlayers: Account[] = [];
 
   beforeAll(async () => {
     admin = accountHelpers.getAdmin();
-    await transactionHelpers.executeEntry(admin, "reset_game").catch(() => { });
+    await transactionHelpers.executeEntry(admin, "reset_game").catch(() => {});
     players = accountHelpers.generatePlayers(5);
   });
 
   it("should join game with 5 players", async () => {
-    for (let i = 0; i < players.length; i++) {
-      await transactionHelpers.executeWithFeePayer(players[i]!, admin, "join_game");
+    for (const player of players) {
+      await transactionHelpers.executeWithFeePayer(player, admin, "join_game");
     }
     const [count] = await transactionHelpers.view("get_players_count");
     expect(Number(count)).toBe(5);
@@ -30,26 +37,109 @@ describe("Lucky Survivor - Full Game Flow", () => {
   it("should start game", async () => {
     await transactionHelpers.executeEntry(admin, "start_game", [120]);
     const [status] = await transactionHelpers.view("get_status");
-    console.log('start_game.status=', status)
+    const [round] = await transactionHelpers.view("get_round");
+    const [eliminationCount] = await transactionHelpers.view("get_elimination_count");
+
     expect(Number(status)).toBe(GameStatus.SELECTION);
+    expect(Number(round)).toBe(1);
+    expect(Number(eliminationCount)).toBe(1);
+  });
+
+  it("should return valid deadlines after game start", async () => {
+    const [roundDeadline, voteDeadline] = await transactionHelpers.view("get_deadlines");
+    expect(Number(roundDeadline)).toBeGreaterThan(0);
+    expect(Number(voteDeadline)).toBe(0);
   });
 
   it("should choose bao and finalize selection", async () => {
     for (let i = 0; i < players.length; i++) {
       await transactionHelpers.executeWithFeePayer(players[i]!, admin, "choose_bao", [i]);
     }
+
+    const [baoOwners] = await transactionHelpers.view("get_all_bao_owners");
+    expect((baoOwners as string[]).length).toBe(5);
+    expect((baoOwners as string[]).every(addr => addr !== "0x0")).toBe(true);
+
     await transactionHelpers.executeEntry(admin, "finalize_selection");
     const [status] = await transactionHelpers.view("get_status");
-    console.log('finalize_selection.status=', status)
     expect(Number(status)).toBe(GameStatus.REVEALING);
   });
 
-  it("should reveal bombs", async () => {
+  it("should reveal bombs and eliminate players", async () => {
+    const [prizesBefore] = await transactionHelpers.view("get_round_prizes");
+
     await transactionHelpers.executeEntry(admin, "reveal_bombs");
+
     const [status] = await transactionHelpers.view("get_status");
-    const [count] = await transactionHelpers.view("get_elimination_count");
-    console.log('reveal_bombs.status=', status)
-    console.log('reveal_bombs.elimination_count=', count)
+    const [bombIndices] = await transactionHelpers.view("get_bomb_indices");
+    const [survivorCount] = await transactionHelpers.view("get_players_count");
+
+    expect((bombIndices as number[]).length).toBe(1);
+    expect(Number(survivorCount)).toBe(4);
     expect([GameStatus.VOTING, GameStatus.ENDED]).toContain(Number(status));
+  });
+
+  it("should have valid voting state", async () => {
+    const [status] = await transactionHelpers.view("get_status");
+    if (Number(status) === GameStatus.ENDED) return;
+
+    const [stopCount, continueCount, missingCount] = await transactionHelpers.view("get_voting_state");
+    const [survivorCount] = await transactionHelpers.view("get_players_count");
+
+    expect(Number(stopCount)).toBe(0);
+    expect(Number(continueCount)).toBe(0);
+    expect(Number(missingCount)).toBe(Number(survivorCount));
+
+    const [, voteDeadline] = await transactionHelpers.view("get_deadlines");
+    expect(Number(voteDeadline)).toBeGreaterThan(0);
+  });
+
+  it("should allow survivors to vote", async () => {
+    const [status] = await transactionHelpers.view("get_status");
+    if (Number(status) === GameStatus.ENDED) return;
+
+    for (const player of players) {
+      try {
+        await transactionHelpers.executeWithFeePayer(player, admin, "vote", [VoteChoice.CONTINUE]);
+        survivingPlayers.push(player);
+      } catch {
+        // eliminated player
+      }
+    }
+
+    const [stopCount, continueCount, missingCount] = await transactionHelpers.view("get_voting_state");
+    expect(Number(continueCount)).toBe(survivingPlayers.length);
+    expect(Number(missingCount)).toBe(0);
+  });
+
+  it("should finalize voting and proceed to next round", async () => {
+    const [status] = await transactionHelpers.view("get_status");
+    if (Number(status) === GameStatus.ENDED) return;
+
+    await transactionHelpers.executeEntry(admin, "finalize_voting");
+
+    const [newStatus] = await transactionHelpers.view("get_status");
+    const [round] = await transactionHelpers.view("get_round");
+
+    expect(Number(newStatus)).toBe(GameStatus.SELECTION);
+    expect(Number(round)).toBe(2);
+  });
+
+  it("should record claimable prizes for eliminated players", async () => {
+    const [round1Consolation] = await transactionHelpers.view("get_consolation_prize_for_round", [1]);
+    const eliminatedCount = players.length - survivingPlayers.length;
+
+    let totalClaimable = 0;
+    for (const player of players) {
+      const [claimable] = await transactionHelpers.view(
+        "get_claimable_balance",
+        [player.accountAddress.toString()],
+        VAULT_MODULE
+      );
+      totalClaimable += Number(claimable);
+    }
+
+    const expectedClaimable = Number(round1Consolation) * eliminatedCount;
+    expect(totalClaimable).toBe(expectedClaimable);
   });
 });

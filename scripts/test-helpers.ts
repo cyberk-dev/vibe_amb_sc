@@ -16,23 +16,6 @@ export const accountHelpers = {
   generatePlayers(count: number): Account[] {
     return Array(count).fill(0).map(() => Account.generate());
   },
-
-  async ensureFunded(
-    account: Account,
-    minBalance = 50_000_000 // 0.5 APT
-  ) {
-    const balance = await aptos.getAccountAPTAmount({
-      accountAddress: account.accountAddress
-    });
-
-    if (balance < minBalance) {
-      console.log(`💰 Funding ${account.accountAddress.toString().slice(0, 10)}...`);
-      await aptos.fundAccount({
-        accountAddress: account.accountAddress,
-        amount: 100_000_000, // 1 APT
-      });
-    }
-  },
 }
 
 export const transactionHelpers = {

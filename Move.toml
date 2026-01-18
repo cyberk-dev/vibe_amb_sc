@@ -5,8 +5,12 @@ authors = []
 edition = "2024.alpha"
 
 [addresses]
+lucky_survivor = "_"
+deployer = "_"
 
 [dev-addresses]
+lucky_survivor = "0xCAFE"
+deployer = "0xDE1112"
 
 [dependencies.AptosFramework]
 git = "https://github.com/aptos-labs/aptos-framework.git"

@@ -3,9 +3,11 @@ module lucky_survivor::vault {
     use aptos_framework::coin::{Self, Coin};
     use aptos_framework::aptos_coin::AptosCoin;
     use aptos_std::smart_table::{Self, SmartTable};
+    use lucky_survivor::package_manager;
 
     const E_NO_CLAIMABLE_BALANCE: u64 = 1001;
     const E_ZERO_AMOUNT: u64 = 1002;
+    const E_ACCESS_DENIED: u64 = 1003;
 
     friend lucky_survivor::game;
 
@@ -20,8 +22,10 @@ module lucky_survivor::vault {
     }
 
     public entry fun initialize(admin: &signer) {
+        assert!(signer::address_of(admin) == @deployer, E_ACCESS_DENIED);
+        let resource_signer = package_manager::get_signer();
         move_to(
-            admin,
+            &resource_signer,
             Vault {
                 balance: coin::zero(),
                 claimable_balances: smart_table::new()
@@ -38,19 +42,17 @@ module lucky_survivor::vault {
     public(friend) fun record_prize(recipient: address, amount: u64) acquires Vault {
         let vault = borrow_global_mut<Vault>(@lucky_survivor);
         let current_balance =
-            if (smart_table::contains(&vault.claimable_balances, recipient)) {
-                *smart_table::borrow(&vault.claimable_balances, recipient)
+            if (vault.claimable_balances.contains(recipient)) {
+                *vault.claimable_balances.borrow(recipient)
             } else { 0 };
-        smart_table::upsert(
-            &mut vault.claimable_balances, recipient, current_balance + amount
-        );
+        vault.claimable_balances.upsert(recipient, current_balance + amount);
     }
 
     #[view]
     public fun get_claimable_balance(addr: address): u64 acquires Vault {
         let vault = borrow_global<Vault>(@lucky_survivor);
-        if (smart_table::contains(&vault.claimable_balances, addr)) {
-            *smart_table::borrow(&vault.claimable_balances, addr)
+        if (vault.claimable_balances.contains(addr)) {
+            *vault.claimable_balances.borrow(addr)
         } else { 0 }
     }
 
@@ -58,13 +60,13 @@ module lucky_survivor::vault {
         let addr = signer::address_of(user);
         let vault = borrow_global_mut<Vault>(@lucky_survivor);
         assert!(
-            smart_table::contains(&vault.claimable_balances, addr),
+            vault.claimable_balances.contains(addr),
             E_NO_CLAIMABLE_BALANCE
         );
-        let amount = *smart_table::borrow(&vault.claimable_balances, addr);
+        let amount = *vault.claimable_balances.borrow(addr);
         assert!(amount > 0, E_ZERO_AMOUNT);
         // reset
-        smart_table::upsert(&mut vault.claimable_balances, addr, 0);
+        vault.claimable_balances.upsert(addr, 0);
         let coins = coin::extract(&mut vault.balance, amount);
         coin::deposit(addr, coins);
     }

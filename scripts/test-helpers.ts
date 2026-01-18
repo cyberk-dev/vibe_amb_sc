@@ -1,5 +1,5 @@
 import { Account, Ed25519PrivateKey, UserTransactionResponse } from "@aptos-labs/ts-sdk";
-import { aptos, CONFIG, GAME_MODULE } from "./CONFIG";
+import { aptos, CONFIG, GAME_MODULE, WHITELIST_MODULE } from "./CONFIG";
 
 export const accountHelpers = {
   getAdmin() {
@@ -37,6 +37,22 @@ export const accountHelpers = {
       }
     }
   },
+
+  /** Register in whitelist and join game with display name */
+  async registerAndJoin(player: Account, admin: Account, displayName: string): Promise<void> {
+    // Register in whitelist
+    await transactionHelpers.executeWithFeePayer(player, admin, "register", [], WHITELIST_MODULE);
+
+    // Get invite code
+    const [code] = await transactionHelpers.view(
+      "get_invite_code",
+      [player.accountAddress.toString()],
+      WHITELIST_MODULE
+    );
+
+    // Join game with code and name
+    await transactionHelpers.executeWithFeePayer(player, admin, "join_game", [code, displayName]);
+  },
 }
 
 export const transactionHelpers = {
@@ -44,13 +60,17 @@ export const transactionHelpers = {
     signer: Account,
     functionName: string,
     args: any[] = [],
-    module = GAME_MODULE
+    module = GAME_MODULE,
+    maxGasAmount = 100000
   ): Promise<UserTransactionResponse> {
     const tx = await aptos.transaction.build.simple({
       sender: signer.accountAddress,
       data: {
         function: `${module}::${functionName}` as `${string}::${string}::${string}`,
         functionArguments: args,
+      },
+      options: {
+        maxGasAmount,
       },
     });
 

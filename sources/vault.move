@@ -11,6 +11,7 @@ module lucky_survivor::vault {
     use lucky_survivor::package_manager;
 
     friend lucky_survivor::game;  // for record_prize
+    friend lucky_survivor::router; // for initialize_friend
 
     //--------------------------------------------------
     // Errors
@@ -78,7 +79,8 @@ module lucky_survivor::vault {
         );
     }
 
-    public entry fun initialize(admin: &signer) {
+    /// Friend function for router to initialize
+    public(friend) fun initialize_friend(admin: &signer) {
         ensure_admin(admin);
         let resource_signer = package_manager::get_signer();
         move_to(
@@ -92,7 +94,8 @@ module lucky_survivor::vault {
         event::emit(Initialized {});
     }
 
-    public entry fun set_payment_fa(admin: &signer, metadata: Object<Metadata>, enabled: bool) acquires Vault {
+    /// Friend function for router to set payment FA
+    public(friend) fun set_payment_fa_friend(admin: &signer, metadata: Object<Metadata>, enabled: bool) acquires Vault {
         ensure_admin(admin);
         set_payment_internal(metadata, enabled);
     }

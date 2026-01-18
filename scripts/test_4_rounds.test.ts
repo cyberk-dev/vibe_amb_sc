@@ -1,6 +1,6 @@
 import { Account } from "@aptos-labs/ts-sdk";
 import { accountHelpers, transactionHelpers } from "./test-helpers";
-import { aptos, VAULT_MODULE, APT_METADATA } from "./CONFIG";
+import { VAULT_MODULE, APT_METADATA, GAME_MODULE } from "./CONFIG";
 
 // ============================================================================
 // CONSTANTS
@@ -62,8 +62,9 @@ describe("Lucky Survivor - Formula-Based Verification", () => {
   // ==========================================================================
 
   it("should join game with correct player count", async () => {
-    for (const player of players) {
-      await transactionHelpers.executeWithFeePayer(player, admin, "join_game");
+    for (let i = 0; i < players.length; i++) {
+      const player = players[i]!;
+      await accountHelpers.registerAndJoin(player, admin, `Player${i + 1}`);
     }
     const [count] = await transactionHelpers.view("get_players_count");
     expect(Number(count)).toBe(PLAYER_COUNT);
@@ -264,8 +265,8 @@ describe("Lucky Survivor - Formula-Based Verification", () => {
     const [statusAfterSelection] = await transactionHelpers.view("get_status");
     expect(Number(statusAfterSelection)).toBe(GameStatus.REVEALING);
 
-    // Reveal Bombs
-    await transactionHelpers.executeEntry(admin, "reveal_bombs");
+    // Reveal Bombs (use higher gas for randomness)
+    await transactionHelpers.executeEntry(admin, "reveal_bombs", [], GAME_MODULE, 100000);
 
     const [statusAfterReveal] = await transactionHelpers.view("get_status");
     const [victims] = await transactionHelpers.view("get_round_victims");

@@ -9,6 +9,7 @@ module lucky_survivor::package_manager {
 
     friend lucky_survivor::game;
     friend lucky_survivor::vault;
+    friend lucky_survivor::whitelist;
 
     #[test_only]
     friend lucky_survivor::package_manager_tests;

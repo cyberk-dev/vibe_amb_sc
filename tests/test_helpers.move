@@ -2,7 +2,7 @@
 module lucky_survivor::test_helpers {
     use std::signer;
     use std::option;
-    use std::string;
+    use std::string::{Self, String};
     use aptos_framework::account;
     use aptos_framework::object;
     use aptos_framework::fungible_asset::{Self, Metadata};
@@ -10,6 +10,7 @@ module lucky_survivor::test_helpers {
     use lucky_survivor::vault;
     use lucky_survivor::game;
     use lucky_survivor::package_manager;
+    use lucky_survivor::whitelist;
 
     public fun create_fungible_asset_and_mint(
         creator: &signer, name: vector<u8>, amount: u64
@@ -62,5 +63,34 @@ module lucky_survivor::test_helpers {
     ) {
         aptos_framework::aptos_account::create_account(addr);
         primary_fungible_store::transfer(deployer, metadata, addr, amount);
+    }
+
+    /// Initialize whitelist for testing
+    public fun setup_whitelist() {
+        whitelist::init_for_test();
+    }
+
+    /// Register a user and join game with auto-generated name
+    public fun register_and_join(user: &signer) {
+        let addr = signer::address_of(user);
+        whitelist::register(user);
+        let code = whitelist::get_invite_code(addr);
+        let name = generate_player_name(addr);
+        game::join_game(user, code, name);
+    }
+
+    /// Register a user and join game with custom name
+    public fun register_and_join_with_name(user: &signer, name: String) {
+        let addr = signer::address_of(user);
+        whitelist::register(user);
+        let code = whitelist::get_invite_code(addr);
+        game::join_game(user, code, name);
+    }
+
+    /// Generate a simple player name from address
+    fun generate_player_name(addr: address): String {
+        // Simple name generation based on address
+        let _ = addr;
+        string::utf8(b"Player")
     }
 }

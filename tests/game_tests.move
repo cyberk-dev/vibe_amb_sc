@@ -6,11 +6,13 @@ module lucky_survivor::game_tests {
     use lucky_survivor::vault;
     use lucky_survivor::package_manager;
     use lucky_survivor::test_helpers;
+    use lucky_survivor::whitelist;
     use aptos_framework::timestamp;
 
     #[test(deployer = @deployer)]
     fun test_initialize(deployer: &signer) {
         package_manager::initialize_for_test();
+        test_helpers::setup_whitelist();
         game::init_for_test(deployer, 100);
         assert!(game::get_status() == 0, 0);
         assert!(game::get_players_count() == 0, 1);
@@ -19,10 +21,11 @@ module lucky_survivor::game_tests {
     #[test(deployer = @deployer, user1 = @0xA1, user2 = @0xA2)]
     fun test_join_game(deployer: &signer, user1: &signer, user2: &signer) {
         package_manager::initialize_for_test();
+        test_helpers::setup_whitelist();
         game::init_for_test(deployer, 200);
-        game::join_game(user1);
+        test_helpers::register_and_join(user1);
         assert!(game::get_players_count() == 1, 0);
-        game::join_game(user2);
+        test_helpers::register_and_join(user2);
         assert!(game::get_players_count() == 2, 1);
     }
 
@@ -30,9 +33,15 @@ module lucky_survivor::game_tests {
     #[expected_failure(abort_code = 2002, location = lucky_survivor::game)]
     fun test_join_game_duplicate(deployer: &signer, user1: &signer) {
         package_manager::initialize_for_test();
+        test_helpers::setup_whitelist();
         game::init_for_test(deployer, 200);
-        game::join_game(user1);
-        game::join_game(user1);
+
+        // Register once, then try to join twice
+        let addr = signer::address_of(user1);
+        whitelist::register(user1);
+        let code = whitelist::get_invite_code(addr);
+        game::join_game(user1, code, std::string::utf8(b"Player1"));
+        game::join_game(user1, code, std::string::utf8(b"Player1")); // Should fail
     }
 
     #[test(
@@ -47,13 +56,14 @@ module lucky_survivor::game_tests {
         u5: &signer
     ) {
         package_manager::initialize_for_test();
+        test_helpers::setup_whitelist();
         game::init_for_test(deployer, 200);
         test_helpers::setup_funded_vault(deployer, 200);
-        game::join_game(u1);
-        game::join_game(u2);
-        game::join_game(u3);
-        game::join_game(u4);
-        game::join_game(u5);
+        test_helpers::register_and_join(u1);
+        test_helpers::register_and_join(u2);
+        test_helpers::register_and_join(u3);
+        test_helpers::register_and_join(u4);
+        test_helpers::register_and_join(u5);
 
         timestamp::set_time_has_started_for_testing(
             &aptos_framework::account::create_signer_for_test(@0x1)
@@ -65,7 +75,7 @@ module lucky_survivor::game_tests {
         assert!(game::get_elimination_count() == 1, 2);
 
         // Verify players have not acted yet
-        let (players, statuses) = game::get_player_statuses();
+        let (players, _, statuses) = game::get_all_players();
         assert!(players.length() == 5, 3);
         assert!(!statuses[0] && !statuses[1], 4);
     }
@@ -76,10 +86,11 @@ module lucky_survivor::game_tests {
         deployer: &signer, u1: &signer, u2: &signer
     ) {
         package_manager::initialize_for_test();
+        test_helpers::setup_whitelist();
         game::init_for_test(deployer, 200);
         test_helpers::setup_funded_vault(deployer, 200);
-        game::join_game(u1);
-        game::join_game(u2);
+        test_helpers::register_and_join(u1);
+        test_helpers::register_and_join(u2);
 
         aptos_framework::timestamp::set_time_has_started_for_testing(
             &account::create_signer_for_test(@0x1)
@@ -100,13 +111,14 @@ module lucky_survivor::game_tests {
         u5: &signer
     ) {
         package_manager::initialize_for_test();
+        test_helpers::setup_whitelist();
         game::init_for_test(deployer, 200);
         test_helpers::setup_funded_vault(deployer, 200);
-        game::join_game(u1);
-        game::join_game(u2);
-        game::join_game(u3);
-        game::join_game(u4);
-        game::join_game(u5);
+        test_helpers::register_and_join(u1);
+        test_helpers::register_and_join(u2);
+        test_helpers::register_and_join(u3);
+        test_helpers::register_and_join(u4);
+        test_helpers::register_and_join(u5);
 
         timestamp::set_time_has_started_for_testing(
             &account::create_signer_for_test(@0x1)
@@ -118,7 +130,7 @@ module lucky_survivor::game_tests {
         let u1_addr = signer::address_of(u1);
         game::choose_bao(u1, u1_addr);
 
-        assert!(game::get_player_status(u1_addr), 0);
+        assert!(game::has_selected(u1_addr), 0);
     }
 
     #[test(
@@ -133,13 +145,14 @@ module lucky_survivor::game_tests {
         u5: &signer
     ) {
         package_manager::initialize_for_test();
+        test_helpers::setup_whitelist();
         game::init_for_test(deployer, 200);
         test_helpers::setup_funded_vault(deployer, 200);
-        game::join_game(u1);
-        game::join_game(u2);
-        game::join_game(u3);
-        game::join_game(u4);
-        game::join_game(u5);
+        test_helpers::register_and_join(u1);
+        test_helpers::register_and_join(u2);
+        test_helpers::register_and_join(u3);
+        test_helpers::register_and_join(u4);
+        test_helpers::register_and_join(u5);
 
         timestamp::set_time_has_started_for_testing(
             &account::create_signer_for_test(@0x1)
@@ -152,9 +165,9 @@ module lucky_survivor::game_tests {
         let u2_addr = signer::address_of(u2);
         game::choose_bao(u1, u2_addr);
 
-        assert!(game::get_player_status(u1_addr), 0);
+        assert!(game::has_selected(u1_addr), 0);
         // Bao assignment verified internally - view functions hidden
-        assert!(!game::get_player_status(u2_addr), 1);
+        assert!(!game::has_selected(u2_addr), 1);
     }
 
     #[test(
@@ -169,13 +182,14 @@ module lucky_survivor::game_tests {
         u5: &signer
     ) {
         package_manager::initialize_for_test();
+        test_helpers::setup_whitelist();
         game::init_for_test(deployer, 200);
         test_helpers::setup_funded_vault(deployer, 200);
-        game::join_game(u1);
-        game::join_game(u2);
-        game::join_game(u3);
-        game::join_game(u4);
-        game::join_game(u5);
+        test_helpers::register_and_join(u1);
+        test_helpers::register_and_join(u2);
+        test_helpers::register_and_join(u3);
+        test_helpers::register_and_join(u4);
+        test_helpers::register_and_join(u5);
 
         timestamp::set_time_has_started_for_testing(
             &account::create_signer_for_test(@0x1)
@@ -192,9 +206,9 @@ module lucky_survivor::game_tests {
         game::choose_bao(u3, u2_addr);  // bao 2 -> u2
 
         // Verify all three players have acted
-        assert!(game::get_player_status(signer::address_of(u1)), 0);
-        assert!(game::get_player_status(signer::address_of(u2)), 1);
-        assert!(game::get_player_status(signer::address_of(u3)), 2);
+        assert!(game::has_selected(signer::address_of(u1)), 0);
+        assert!(game::has_selected(signer::address_of(u2)), 1);
+        assert!(game::has_selected(signer::address_of(u3)), 2);
     }
 
     #[test(
@@ -210,13 +224,14 @@ module lucky_survivor::game_tests {
         u5: &signer
     ) {
         package_manager::initialize_for_test();
+        test_helpers::setup_whitelist();
         game::init_for_test(deployer, 200);
         test_helpers::setup_funded_vault(deployer, 200);
-        game::join_game(u1);
-        game::join_game(u2);
-        game::join_game(u3);
-        game::join_game(u4);
-        game::join_game(u5);
+        test_helpers::register_and_join(u1);
+        test_helpers::register_and_join(u2);
+        test_helpers::register_and_join(u3);
+        test_helpers::register_and_join(u4);
+        test_helpers::register_and_join(u5);
 
         timestamp::set_time_has_started_for_testing(
             &account::create_signer_for_test(@0x1)
@@ -241,13 +256,14 @@ module lucky_survivor::game_tests {
         u5: &signer
     ) {
         package_manager::initialize_for_test();
+        test_helpers::setup_whitelist();
         game::init_for_test(deployer, 200);
         test_helpers::setup_funded_vault(deployer, 200);
-        game::join_game(u1);
-        game::join_game(u2);
-        game::join_game(u3);
-        game::join_game(u4);
-        game::join_game(u5);
+        test_helpers::register_and_join(u1);
+        test_helpers::register_and_join(u2);
+        test_helpers::register_and_join(u3);
+        test_helpers::register_and_join(u4);
+        test_helpers::register_and_join(u5);
 
         timestamp::set_time_has_started_for_testing(
             &account::create_signer_for_test(@0x1)
@@ -264,7 +280,7 @@ module lucky_survivor::game_tests {
         assert!(game::get_status() == 2, 0);  // STATUS_REVEALING
 
         // Verify all players have acted (u1, u2 explicitly, u3-u5 auto-keep)
-        let (players, statuses) = game::get_player_statuses();
+        let (players, _, statuses) = game::get_all_players();
         assert!(players.length() == 5, 1);
         let i = 0;
         while (i < 5) {
@@ -285,13 +301,14 @@ module lucky_survivor::game_tests {
         u5: &signer
     ) {
         package_manager::initialize_for_test();
+        test_helpers::setup_whitelist();
         game::init_for_test(deployer, 200);
         test_helpers::setup_funded_vault(deployer, 200);
-        game::join_game(u1);
-        game::join_game(u2);
-        game::join_game(u3);
-        game::join_game(u4);
-        game::join_game(u5);
+        test_helpers::register_and_join(u1);
+        test_helpers::register_and_join(u2);
+        test_helpers::register_and_join(u3);
+        test_helpers::register_and_join(u4);
+        test_helpers::register_and_join(u5);
 
         timestamp::set_time_has_started_for_testing(
             &account::create_signer_for_test(@0x1)
@@ -323,13 +340,14 @@ module lucky_survivor::game_tests {
         u5: &signer
     ) {
         package_manager::initialize_for_test();
+        test_helpers::setup_whitelist();
         game::init_for_test(deployer, 200);
         test_helpers::setup_funded_vault(deployer, 200);
-        game::join_game(u1);
-        game::join_game(u2);
-        game::join_game(u3);
-        game::join_game(u4);
-        game::join_game(u5);
+        test_helpers::register_and_join(u1);
+        test_helpers::register_and_join(u2);
+        test_helpers::register_and_join(u3);
+        test_helpers::register_and_join(u4);
+        test_helpers::register_and_join(u5);
 
         timestamp::set_time_has_started_for_testing(
             &account::create_signer_for_test(@0x1)
@@ -345,8 +363,9 @@ module lucky_survivor::game_tests {
     #[expected_failure(abort_code = 2010, location = lucky_survivor::game)]
     fun test_vote_not_in_voting(deployer: &signer, u1: &signer) {
         package_manager::initialize_for_test();
+        test_helpers::setup_whitelist();
         game::init_for_test(deployer, 200);
-        game::join_game(u1);
+        test_helpers::register_and_join(u1);
 
         game::vote(u1, 1);
     }
@@ -363,13 +382,14 @@ module lucky_survivor::game_tests {
         u5: &signer
     ) {
         package_manager::initialize_for_test();
+        test_helpers::setup_whitelist();
         game::init_for_test(deployer, 200);
         test_helpers::setup_funded_vault(deployer, 200);
-        game::join_game(u1);
-        game::join_game(u2);
-        game::join_game(u3);
-        game::join_game(u4);
-        game::join_game(u5);
+        test_helpers::register_and_join(u1);
+        test_helpers::register_and_join(u2);
+        test_helpers::register_and_join(u3);
+        test_helpers::register_and_join(u4);
+        test_helpers::register_and_join(u5);
         timestamp::set_time_has_started_for_testing(
             &account::create_signer_for_test(@0x1)
         );
@@ -385,7 +405,7 @@ module lucky_survivor::game_tests {
         assert!(game::get_round() == 2, 1);
 
         // Verify player actions reset for round 2
-        assert!(!game::get_player_status(signer::address_of(u1)), 2);
+        assert!(!game::has_selected(signer::address_of(u1)), 2);
     }
 
     #[test(
@@ -400,13 +420,14 @@ module lucky_survivor::game_tests {
         u5: &signer
     ) {
         package_manager::initialize_for_test();
+        test_helpers::setup_whitelist();
         game::init_for_test(deployer, 200);
         let metadata = test_helpers::setup_funded_vault(deployer, 200);
-        game::join_game(u1);
-        game::join_game(u2);
-        game::join_game(u3);
-        game::join_game(u4);
-        game::join_game(u5);
+        test_helpers::register_and_join(u1);
+        test_helpers::register_and_join(u2);
+        test_helpers::register_and_join(u3);
+        test_helpers::register_and_join(u4);
+        test_helpers::register_and_join(u5);
 
         timestamp::set_time_has_started_for_testing(
             &account::create_signer_for_test(@0x1)
@@ -430,6 +451,7 @@ module lucky_survivor::game_tests {
     #[expected_failure(abort_code = 2010, location = lucky_survivor::game)]
     fun test_finalize_voting_not_in_voting(deployer: &signer) {
         package_manager::initialize_for_test();
+        test_helpers::setup_whitelist();
         game::init_for_test(deployer, 200);
         game::finalize_voting(deployer);
     }
@@ -446,13 +468,14 @@ module lucky_survivor::game_tests {
         u5: &signer
     ) {
         package_manager::initialize_for_test();
+        test_helpers::setup_whitelist();
         game::init_for_test(deployer, 100);
         let metadata = test_helpers::setup_funded_vault(deployer, 100);
-        game::join_game(u1);
-        game::join_game(u2);
-        game::join_game(u3);
-        game::join_game(u4);
-        game::join_game(u5);
+        test_helpers::register_and_join(u1);
+        test_helpers::register_and_join(u2);
+        test_helpers::register_and_join(u3);
+        test_helpers::register_and_join(u4);
+        test_helpers::register_and_join(u5);
 
         timestamp::set_time_has_started_for_testing(
             &account::create_signer_for_test(@0x1)
@@ -487,6 +510,7 @@ module lucky_survivor::game_tests {
         u3: &signer
     ) {
         package_manager::initialize_for_test();
+        test_helpers::setup_whitelist();
         game::init_for_test(deployer, 100);
         let metadata = test_helpers::setup_funded_vault(deployer, 100);
 
@@ -534,14 +558,15 @@ module lucky_survivor::game_tests {
         u5: &signer
     ) {
         package_manager::initialize_for_test();
+        test_helpers::setup_whitelist();
         game::init_for_test(deployer, 1000);
         test_helpers::setup_funded_vault(deployer, 1000);
 
-        game::join_game(u1);
-        game::join_game(u2);
-        game::join_game(u3);
-        game::join_game(u4);
-        game::join_game(u5);
+        test_helpers::register_and_join(u1);
+        test_helpers::register_and_join(u2);
+        test_helpers::register_and_join(u3);
+        test_helpers::register_and_join(u4);
+        test_helpers::register_and_join(u5);
 
         timestamp::set_time_has_started_for_testing(
             &account::create_signer_for_test(@0x1)
@@ -549,12 +574,12 @@ module lucky_survivor::game_tests {
         game::start_game(deployer);
 
         // Test has_acted before and after action
-        assert!(!game::get_player_status(signer::address_of(u1)), 0);
+        assert!(!game::has_selected(signer::address_of(u1)), 0);
         game::choose_bao(u1, signer::address_of(u1));
-        assert!(game::get_player_status(signer::address_of(u1)), 1);
+        assert!(game::has_selected(signer::address_of(u1)), 1);
 
         // Test get_player_statuses
-        let (players, statuses) = game::get_player_statuses();
+        let (players, _, statuses) = game::get_all_players();
         assert!(players.length() == 5, 2);
         assert!(statuses[0], 3);  // u1 has acted
         assert!(!statuses[1], 4); // u2 has not acted
@@ -589,13 +614,14 @@ module lucky_survivor::game_tests {
         u5: &signer
     ) {
         package_manager::initialize_for_test();
+        test_helpers::setup_whitelist();
         game::init_for_test(deployer, 200);
         test_helpers::setup_funded_vault(deployer, 50);
-        game::join_game(u1);
-        game::join_game(u2);
-        game::join_game(u3);
-        game::join_game(u4);
-        game::join_game(u5);
+        test_helpers::register_and_join(u1);
+        test_helpers::register_and_join(u2);
+        test_helpers::register_and_join(u3);
+        test_helpers::register_and_join(u4);
+        test_helpers::register_and_join(u5);
 
         timestamp::set_time_has_started_for_testing(
             &account::create_signer_for_test(@0x1)
@@ -616,13 +642,14 @@ module lucky_survivor::game_tests {
         u5: &signer
     ) {
         package_manager::initialize_for_test();
+        test_helpers::setup_whitelist();
         game::init_for_test(deployer, 1000);
         test_helpers::setup_funded_vault(deployer, 1000);
-        game::join_game(u1);
-        game::join_game(u2);
-        game::join_game(u3);
-        game::join_game(u4);
-        game::join_game(u5);
+        test_helpers::register_and_join(u1);
+        test_helpers::register_and_join(u2);
+        test_helpers::register_and_join(u3);
+        test_helpers::register_and_join(u4);
+        test_helpers::register_and_join(u5);
 
         timestamp::set_time_has_started_for_testing(
             &account::create_signer_for_test(@0x1)
@@ -659,7 +686,7 @@ module lucky_survivor::game_tests {
 
         // Verify victim is NOT in the active player list
         let victim = victims[0];
-        let (players, _) = game::get_player_statuses();
+        let (players, _, _) = game::get_all_players();
         assert!(!players.contains(&victim), 5);
     }
 }

@@ -34,8 +34,9 @@ describe("Lucky Survivor - Full Game Flow", () => {
   });
 
   it("should join game with 5 players", async () => {
-    for (const player of players) {
-      await transactionHelpers.executeWithFeePayer(player, admin, "join_game");
+    for (let i = 0; i < players.length; i++) {
+      const player = players[i]!;
+      await accountHelpers.registerAndJoin(player, admin, `Player${i + 1}`);
     }
     const [count] = await transactionHelpers.view("get_players_count");
     expect(Number(count)).toBe(5);
@@ -63,8 +64,8 @@ describe("Lucky Survivor - Full Game Flow", () => {
       );
     }
 
-    // Verify all players have acted using get_player_statuses
-    const [addresses, statuses] = await transactionHelpers.view("get_player_statuses");
+    // Verify all players have acted using get_all_players
+    const [addresses, , statuses] = await transactionHelpers.view("get_all_players");
     expect((addresses as string[]).length).toBe(5);
     expect((statuses as boolean[]).every(s => s === true)).toBe(true);
 

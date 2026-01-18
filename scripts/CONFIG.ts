@@ -18,4 +18,5 @@ export const aptos = new Aptos(
 )
 export const GAME_MODULE = `${CONFIG.CONTRACT_ADDRESS}::game`;
 export const VAULT_MODULE = `${CONFIG.CONTRACT_ADDRESS}::vault`;
+export const WHITELIST_MODULE = `${CONFIG.CONTRACT_ADDRESS}::whitelist`;
 export const APT_METADATA = "0xa";

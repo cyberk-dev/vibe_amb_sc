@@ -4,6 +4,7 @@ set -e
 PROFILE=${1:-"lucky-testnet"}
 SEED=${2:-"lucky_survivor_v1"}
 PRIZE_POOL=${3:-1000000}
+OLD_CONTRACT=${4:-""}  # Optional: old contract address to withdraw from
 # APT FungibleAsset metadata address on Aptos (0xa)
 APT_METADATA="0xa"
 
@@ -13,6 +14,9 @@ echo "Profile: $PROFILE"
 echo "Seed: $SEED"
 echo "Prize Pool: $PRIZE_POOL"
 echo "Payment Asset: APT ($APT_METADATA)"
+if [ -n "$OLD_CONTRACT" ]; then
+  echo "Old Contract: $OLD_CONTRACT (will withdraw funds)"
+fi
 echo "========================================="
 
 # Get deployer address
@@ -22,6 +26,23 @@ if [ -z "$DEPLOYER" ] || [ "$DEPLOYER" == "null" ]; then
   exit 1
 fi
 echo "Deployer Address: $DEPLOYER"
+
+# =========================================
+# STEP 0: Withdraw funds from old contract (if provided)
+# =========================================
+if [ -n "$OLD_CONTRACT" ]; then
+  echo ""
+  echo "Step 0: Withdrawing funds from old contract..."
+
+  # Try to withdraw all funds from old vault
+  aptos move run \
+    --function-id ${OLD_CONTRACT}::vault::withdraw_all \
+    --args "address:$APT_METADATA" \
+    --profile $PROFILE \
+    --assume-yes || echo "Warning: Could not withdraw from old contract (may be empty or already withdrawn)"
+
+  echo "Old contract funds withdrawn to deployer wallet."
+fi
 
 # Create resource account and publish package
 aptos move create-resource-account-and-publish-package \
@@ -39,40 +60,16 @@ RESOURCE_ADDRESS=$(aptos account derive-resource-account-address --seed $SEED --
 echo ""
 echo "Initializing modules..."
 
-# Initialize vault
-echo "1/5 Initializing vault..."
+# Initialize all modules via router (vault, whitelist, game)
+echo "1/2 Initializing all modules via router..."
 aptos move run \
-  --function-id ${RESOURCE_ADDRESS}::vault::initialize \
-  --profile $PROFILE \
-  --assume-yes
-
-# Set payment FA (APT)
-echo "2/5 Setting APT as payment asset..."
-aptos move run \
-  --function-id ${RESOURCE_ADDRESS}::vault::set_payment_fa \
-  --type-args \
-  --args "address:$APT_METADATA" "bool:true" \
-  --profile $PROFILE \
-  --assume-yes
-
-# Initialize game with prize pool
-echo "3/5 Initializing game..."
-aptos move run \
-  --function-id ${RESOURCE_ADDRESS}::game::initialize \
-  --args u64:$PRIZE_POOL \
-  --profile $PROFILE \
-  --assume-yes
-
-# Set asset on game
-echo "4/5 Setting game asset..."
-aptos move run \
-  --function-id ${RESOURCE_ADDRESS}::game::set_asset \
-  --args "address:$APT_METADATA" \
+  --function-id ${RESOURCE_ADDRESS}::router::initialize_all \
+  --args "u64:$PRIZE_POOL" "address:$APT_METADATA" \
   --profile $PROFILE \
   --assume-yes
 
 # Fund vault with prize pool amount
-echo "5/5 Funding vault with $PRIZE_POOL APT..."
+echo "2/2 Funding vault with $PRIZE_POOL APT..."
 aptos move run \
   --function-id ${RESOURCE_ADDRESS}::vault::fund_vault \
   --args "address:$APT_METADATA" "u64:$PRIZE_POOL" \

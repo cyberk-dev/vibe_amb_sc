@@ -16,6 +16,27 @@ export const accountHelpers = {
   generatePlayers(count: number): Account[] {
     return Array(count).fill(0).map(() => Account.generate());
   },
+
+  async clawback(players: Account[], admin: Account): Promise<void> {
+    for (const player of players) {
+      try {
+        const balance = await aptos.getAccountAPTAmount({
+          accountAddress: player.accountAddress,
+        });
+        if (balance > 0) {
+          await transactionHelpers.executeWithFeePayer(
+            player,
+            admin,
+            "transfer",
+            [admin.accountAddress.toString(), balance],
+            "0x1::aptos_account"
+          );
+        }
+      } catch {
+        // player has no balance or account doesn't exist
+      }
+    }
+  },
 }
 
 export const transactionHelpers = {
@@ -33,7 +54,6 @@ export const transactionHelpers = {
       },
     });
 
-    // Simulate first (FREE)
     const [simResult] = await aptos.transaction.simulate.simple({
       signerPublicKey: signer.publicKey,
       transaction: tx,
@@ -43,7 +63,6 @@ export const transactionHelpers = {
       throw new Error(`Simulation failed: ${simResult?.vm_status}`);
     }
 
-    // Submit
     const result = await aptos.signAndSubmitTransaction({ signer, transaction: tx });
     const response = await aptos.waitForTransaction({ transactionHash: result.hash });
 
@@ -66,13 +85,9 @@ export const transactionHelpers = {
       },
     });
 
-    // Player signs
     const playerSig = aptos.transaction.sign({ signer: player, transaction: tx });
-
-    // Admin signs as fee payer
     const feePayerSig = aptos.transaction.signAsFeePayer({ signer: admin, transaction: tx });
 
-    // Submit with both signatures
     const result = await aptos.transaction.submit.simple({
       transaction: tx,
       senderAuthenticator: playerSig,

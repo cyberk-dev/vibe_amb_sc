@@ -1,10 +1,13 @@
 module lucky_survivor::game {
     use std::vector;
     use std::signer;
+    use std::option::{Self, Option};
     use aptos_std::smart_table::{Self, SmartTable};
     use aptos_framework::event;
     use aptos_framework::timestamp;
     use aptos_framework::randomness;
+    use aptos_framework::object::Object;
+    use aptos_framework::fungible_asset::Metadata;
     use lucky_survivor::vault;
     use lucky_survivor::package_manager;
     use lucky_survivor::full_math;
@@ -30,6 +33,10 @@ module lucky_survivor::game {
     const E_NOT_IN_VOTING: u64 = 2010;
     const E_ALREADY_VOTED: u64 = 2011;
     const E_ACCESS_DENIED: u64 = 2012;
+    const E_INSUFFICIENT_VAULT_BALANCE: u64 = 2013;
+    const E_ASSET_NOT_SET: u64 = 2014;
+    const E_GAME_ALREADY_STARTED: u64 = 2015;
+    const E_INVALID_PAYMENT_ASSET: u64 = 2016;
 
     struct Game has key {
         round: u8,
@@ -45,7 +52,8 @@ module lucky_survivor::game {
         spent_amount: u64,
         consolation_bps: vector<u64>,
         votes: SmartTable<address, u8>,
-        vote_deadline: u64
+        vote_deadline: u64,
+        asset_metadata: Option<Object<Metadata>>
     }
 
     #[event]
@@ -139,9 +147,18 @@ module lucky_survivor::game {
                 spent_amount: 0,
                 consolation_bps: vector[25, 50, 75, 100],
                 votes: smart_table::new(),
-                vote_deadline: 0
+                vote_deadline: 0,
+                asset_metadata: option::none()
             }
         );
+    }
+
+    public entry fun set_asset(admin: &signer, metadata: Object<Metadata>) acquires Game {
+        assert!(signer::address_of(admin) == @deployer, E_ACCESS_DENIED);
+        let game = borrow_global_mut<Game>(@lucky_survivor);
+        assert!(game.status == STATUS_PENDING, E_GAME_ALREADY_STARTED);
+        assert!(vault::is_valid_payment_fa(metadata), E_INVALID_PAYMENT_ASSET);
+        game.asset_metadata = option::some(metadata);
     }
 
     public entry fun join_game(user: &signer) acquires Game {
@@ -159,6 +176,12 @@ module lucky_survivor::game {
         assert!(game.status == STATUS_PENDING, E_GAME_NOT_PENDING);
         let num_players = game.players.length();
         assert!(num_players >= 5, E_NOT_ENOUGH_PLAYERS);
+        assert!(option::is_some(&game.asset_metadata), E_ASSET_NOT_SET);
+        let metadata = *option::borrow(&game.asset_metadata);
+        assert!(
+            vault::get_balance(metadata) >= game.prize_pool,
+            E_INSUFFICIENT_VAULT_BALANCE
+        );
         game.elimination_count = num_players / 4;
         if (game.elimination_count == 0) {
             game.elimination_count = 1;
@@ -282,6 +305,7 @@ module lucky_survivor::game {
 
         game.bomb_indices = bombs;
 
+        let metadata = *game.asset_metadata.borrow();
         let consolation_bps = get_consolation_bps(game.round, &game.consolation_bps);
         let consolation_amount =
             full_math::mul_div_u64(game.prize_pool, consolation_bps, 10000);
@@ -293,8 +317,8 @@ module lucky_survivor::game {
             let victim = *game.bao_assignments.borrow(bomb_idx);
             eliminated.push_back(victim);
 
-            vault::record_prize(victim, consolation_amount);
-            game.spent_amount = game.spent_amount + consolation_amount;
+            vault::record_prize(victim, metadata, consolation_amount);
+            game.spent_amount += consolation_amount;
             j += 1;
         };
 
@@ -315,7 +339,7 @@ module lucky_survivor::game {
                 let winner = game.players[0];
                 let winner_prize = calculate_winner_prize(game);
 
-                vault::record_prize(winner, winner_prize);
+                vault::record_prize(winner, metadata, winner_prize);
                 event::emit(GameEnded { winner, prize: winner_prize });
             };
             game.status = STATUS_ENDED;
@@ -572,11 +596,12 @@ module lucky_survivor::game {
     fun split_prize_equally(game: &Game) {
         let count = game.players.length();
         if (count == 0) return;
+        let metadata = *option::borrow(&game.asset_metadata);
         let remaining = game.prize_pool - game.spent_amount;
         let per_person = remaining / count;
         let i = 0;
         while (i < count) {
-            vault::record_prize(game.players[i], per_person);
+            vault::record_prize(game.players[i], metadata, per_person);
             i += 1;
         };
 
@@ -600,6 +625,12 @@ module lucky_survivor::game {
     #[test_only]
     public fun init_for_test(admin: &signer, prize_pool: u64) {
         initialize(admin, prize_pool);
+    }
+
+    #[test_only]
+    public fun set_asset_for_test(metadata: Object<Metadata>) acquires Game {
+        let game = borrow_global_mut<Game>(@lucky_survivor);
+        game.asset_metadata = option::some(metadata);
     }
 
     #[test_only]

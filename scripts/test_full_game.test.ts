@@ -1,6 +1,6 @@
 import { Account } from "@aptos-labs/ts-sdk";
 import { accountHelpers, transactionHelpers } from "./test-helpers";
-import { VAULT_MODULE } from "./CONFIG";
+import { aptos, VAULT_MODULE, APT_METADATA } from "./CONFIG";
 
 const GameStatus = {
   PENDING: 0,
@@ -19,11 +19,18 @@ describe("Lucky Survivor - Full Game Flow", () => {
   let admin: Account;
   let players: Account[];
   let survivingPlayers: Account[] = [];
+  let eliminatedPlayers: Account[] = [];
 
   beforeAll(async () => {
     admin = accountHelpers.getAdmin();
     await transactionHelpers.executeEntry(admin, "reset_game").catch(() => {});
+    await transactionHelpers.executeEntry(admin, "fund_vault", [APT_METADATA, 1000000], VAULT_MODULE);
     players = accountHelpers.generatePlayers(5);
+  });
+
+  afterAll(async () => {
+    await accountHelpers.clawback(players, admin);
+    await transactionHelpers.executeEntry(admin, "withdraw_all", [APT_METADATA], VAULT_MODULE).catch(() => {});
   });
 
   it("should join game with 5 players", async () => {
@@ -66,8 +73,6 @@ describe("Lucky Survivor - Full Game Flow", () => {
   });
 
   it("should reveal bombs and eliminate players", async () => {
-    const [prizesBefore] = await transactionHelpers.view("get_round_prizes");
-
     await transactionHelpers.executeEntry(admin, "reveal_bombs");
 
     const [status] = await transactionHelpers.view("get_status");
@@ -103,7 +108,7 @@ describe("Lucky Survivor - Full Game Flow", () => {
         await transactionHelpers.executeWithFeePayer(player, admin, "vote", [VoteChoice.CONTINUE]);
         survivingPlayers.push(player);
       } catch {
-        // eliminated player
+        eliminatedPlayers.push(player);
       }
     }
 
@@ -127,13 +132,13 @@ describe("Lucky Survivor - Full Game Flow", () => {
 
   it("should record claimable prizes for eliminated players", async () => {
     const [round1Consolation] = await transactionHelpers.view("get_consolation_prize_for_round", [1]);
-    const eliminatedCount = players.length - survivingPlayers.length;
+    const eliminatedCount = eliminatedPlayers.length;
 
     let totalClaimable = 0;
     for (const player of players) {
       const [claimable] = await transactionHelpers.view(
         "get_claimable_balance",
-        [player.accountAddress.toString()],
+        [player.accountAddress.toString(), APT_METADATA],
         VAULT_MODULE
       );
       totalClaimable += Number(claimable);
@@ -141,5 +146,42 @@ describe("Lucky Survivor - Full Game Flow", () => {
 
     const expectedClaimable = Number(round1Consolation) * eliminatedCount;
     expect(totalClaimable).toBe(expectedClaimable);
+  });
+
+  it("should allow eliminated players to claim prizes", async () => {
+    if (eliminatedPlayers.length === 0) return;
+
+    const [vaultBalanceBefore] = await transactionHelpers.view("get_balance", [APT_METADATA], VAULT_MODULE);
+
+    for (const player of eliminatedPlayers) {
+      const [claimableBefore] = await transactionHelpers.view(
+        "get_claimable_balance",
+        [player.accountAddress.toString(), APT_METADATA],
+        VAULT_MODULE
+      );
+
+      if (Number(claimableBefore) === 0) continue;
+
+      await transactionHelpers.executeWithFeePayer(player, admin, "claim_prizes", [APT_METADATA], VAULT_MODULE);
+
+      const [claimableAfter] = await transactionHelpers.view(
+        "get_claimable_balance",
+        [player.accountAddress.toString(), APT_METADATA],
+        VAULT_MODULE
+      );
+
+      expect(Number(claimableAfter)).toBe(0);
+
+      const playerBalance = await aptos.getAccountAPTAmount({
+        accountAddress: player.accountAddress,
+      });
+      expect(playerBalance).toBe(Number(claimableBefore));
+    }
+
+    const [vaultBalanceAfter] = await transactionHelpers.view("get_balance", [APT_METADATA], VAULT_MODULE);
+    const [round1Consolation] = await transactionHelpers.view("get_consolation_prize_for_round", [1]);
+    const expectedDecrease = Number(round1Consolation) * eliminatedPlayers.length;
+
+    expect(Number(vaultBalanceBefore) - Number(vaultBalanceAfter)).toBe(expectedDecrease);
   });
 });

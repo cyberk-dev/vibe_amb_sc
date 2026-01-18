@@ -5,6 +5,7 @@ module lucky_survivor::game_tests {
     use lucky_survivor::game;
     use lucky_survivor::vault;
     use lucky_survivor::package_manager;
+    use lucky_survivor::test_helpers;
     use aptos_framework::timestamp;
 
     #[test(deployer = @deployer)]
@@ -47,6 +48,7 @@ module lucky_survivor::game_tests {
     ) {
         package_manager::initialize_for_test();
         game::init_for_test(deployer, 200);
+        test_helpers::setup_funded_vault(deployer, 200);
         game::join_game(u1);
         game::join_game(u2);
         game::join_game(u3);
@@ -70,6 +72,7 @@ module lucky_survivor::game_tests {
     ) {
         package_manager::initialize_for_test();
         game::init_for_test(deployer, 200);
+        test_helpers::setup_funded_vault(deployer, 200);
         game::join_game(u1);
         game::join_game(u2);
 
@@ -77,7 +80,7 @@ module lucky_survivor::game_tests {
             &account::create_signer_for_test(@0x1)
         );
 
-        game::start_game(deployer, 120); // Should fail - only 2 players
+        game::start_game(deployer, 120);
     }
 
     #[test(
@@ -93,6 +96,7 @@ module lucky_survivor::game_tests {
     ) {
         package_manager::initialize_for_test();
         game::init_for_test(deployer, 200);
+        test_helpers::setup_funded_vault(deployer, 200);
         game::join_game(u1);
         game::join_game(u2);
         game::join_game(u3);
@@ -128,6 +132,7 @@ module lucky_survivor::game_tests {
     ) {
         package_manager::initialize_for_test();
         game::init_for_test(deployer, 200);
+        test_helpers::setup_funded_vault(deployer, 200);
         game::join_game(u1);
         game::join_game(u2);
         game::join_game(u3);
@@ -140,7 +145,7 @@ module lucky_survivor::game_tests {
 
         game::start_game(deployer, 120);
         game::choose_bao(u1, 0);
-        game::choose_bao(u2, 0); // Should fail - bao 0 already taken
+        game::choose_bao(u2, 0);
     }
 
     #[test(
@@ -157,6 +162,7 @@ module lucky_survivor::game_tests {
     ) {
         package_manager::initialize_for_test();
         game::init_for_test(deployer, 200);
+        test_helpers::setup_funded_vault(deployer, 200);
         game::join_game(u1);
         game::join_game(u2);
         game::join_game(u3);
@@ -169,7 +175,7 @@ module lucky_survivor::game_tests {
 
         game::start_game(deployer, 120);
         game::choose_bao(u1, 0);
-        game::choose_bao(u1, 1); // Should fail - u1 already chose
+        game::choose_bao(u1, 1);
     }
 
     #[test(
@@ -185,6 +191,7 @@ module lucky_survivor::game_tests {
     ) {
         package_manager::initialize_for_test();
         game::init_for_test(deployer, 200);
+        test_helpers::setup_funded_vault(deployer, 200);
         game::join_game(u1);
         game::join_game(u2);
         game::join_game(u3);
@@ -201,7 +208,7 @@ module lucky_survivor::game_tests {
 
         game::finalize_selection(deployer);
 
-        assert!(game::get_status() == 2, 0); // STATUS_REVEALING
+        assert!(game::get_status() == 2, 0);
 
         let (found1, _) = game::get_player_bao(signer::address_of(u1));
         let (found2, _) = game::get_player_bao(signer::address_of(u2));
@@ -224,6 +231,7 @@ module lucky_survivor::game_tests {
     ) {
         package_manager::initialize_for_test();
         game::init_for_test(deployer, 200);
+        test_helpers::setup_funded_vault(deployer, 200);
         game::join_game(u1);
         game::join_game(u2);
         game::join_game(u3);
@@ -236,7 +244,7 @@ module lucky_survivor::game_tests {
         game::start_game(deployer, 120);
 
         game::set_voting_status_for_test();
-        assert!(game::get_status() == 3, 0); // STATUS_VOTING
+        assert!(game::get_status() == 3, 0);
 
         game::vote(u1, 1);
         let (found, vote_val) = game::get_vote(signer::address_of(u1));
@@ -261,6 +269,7 @@ module lucky_survivor::game_tests {
     ) {
         package_manager::initialize_for_test();
         game::init_for_test(deployer, 200);
+        test_helpers::setup_funded_vault(deployer, 200);
         game::join_game(u1);
         game::join_game(u2);
         game::join_game(u3);
@@ -274,7 +283,7 @@ module lucky_survivor::game_tests {
         game::set_voting_status_for_test();
 
         game::vote(u1, 1);
-        game::vote(u1, 0); // Should fail - already voted
+        game::vote(u1, 0);
     }
 
     #[test(deployer = @deployer, u1 = @0x1)]
@@ -284,8 +293,7 @@ module lucky_survivor::game_tests {
         game::init_for_test(deployer, 200);
         game::join_game(u1);
 
-        // Status is PENDING, not VOTING
-        game::vote(u1, 1); // Should fail
+        game::vote(u1, 1);
     }
 
     #[test(
@@ -301,6 +309,7 @@ module lucky_survivor::game_tests {
     ) {
         package_manager::initialize_for_test();
         game::init_for_test(deployer, 200);
+        test_helpers::setup_funded_vault(deployer, 200);
         game::join_game(u1);
         game::join_game(u2);
         game::join_game(u3);
@@ -314,9 +323,8 @@ module lucky_survivor::game_tests {
         game::vote(u1, 1);
         game::vote(u2, 0);
         game::finalize_voting(deployer);
-        // Should go to next round (SELECTION)
-        assert!(game::get_status() == 1, 0); // STATUS_SELECTION
-        assert!(game::get_round() == 2, 1); // Round 2
+        assert!(game::get_status() == 1, 0);
+        assert!(game::get_round() == 2, 1);
     }
 
     #[test(
@@ -331,9 +339,8 @@ module lucky_survivor::game_tests {
         u5: &signer
     ) {
         package_manager::initialize_for_test();
-        vault::init_for_test(deployer);
-
         game::init_for_test(deployer, 200);
+        let metadata = test_helpers::setup_funded_vault(deployer, 200);
         game::join_game(u1);
         game::join_game(u2);
         game::join_game(u3);
@@ -353,8 +360,8 @@ module lucky_survivor::game_tests {
 
         game::finalize_voting(deployer);
 
-        assert!(game::get_status() == 4, 0); // STATUS_ENDED
-        let prize = vault::get_claimable_balance(signer::address_of(u1));
+        assert!(game::get_status() == 4, 0);
+        let prize = vault::get_claimable_balance(signer::address_of(u1), metadata);
         assert!(prize > 0, 1);
     }
 
@@ -363,7 +370,7 @@ module lucky_survivor::game_tests {
     fun test_finalize_voting_not_in_voting(deployer: &signer) {
         package_manager::initialize_for_test();
         game::init_for_test(deployer, 200);
-        game::finalize_voting(deployer); // Status is PENDING
+        game::finalize_voting(deployer);
     }
 
     #[test(
@@ -377,12 +384,9 @@ module lucky_survivor::game_tests {
         u4: &signer,
         u5: &signer
     ) {
-        // Test: 5 survivors split a 100 unit prize with no eliminations
-        // spent_amount = 0, so 100 / 5 = 20 each
         package_manager::initialize_for_test();
-        vault::init_for_test(deployer);
-
-        game::init_for_test(deployer, 100); // 100 unit prize pool
+        game::init_for_test(deployer, 100);
+        let metadata = test_helpers::setup_funded_vault(deployer, 100);
         game::join_game(u1);
         game::join_game(u2);
         game::join_game(u3);
@@ -395,7 +399,6 @@ module lucky_survivor::game_tests {
         game::start_game(deployer, 120);
         game::set_voting_status_for_test();
 
-        // All 5 vote STOP to trigger split
         game::vote(u1, 0);
         game::vote(u2, 0);
         game::vote(u3, 0);
@@ -404,15 +407,13 @@ module lucky_survivor::game_tests {
 
         game::finalize_voting(deployer);
 
-        assert!(game::get_status() == 4, 0); // STATUS_ENDED
+        assert!(game::get_status() == 4, 0);
 
-        // No eliminations, so spent_amount = 0
-        // 100 / 5 = 20 each
-        let prize_u1 = vault::get_claimable_balance(signer::address_of(u1));
-        let prize_u2 = vault::get_claimable_balance(signer::address_of(u2));
-        let prize_u3 = vault::get_claimable_balance(signer::address_of(u3));
+        let prize_u1 = vault::get_claimable_balance(signer::address_of(u1), metadata);
+        let prize_u2 = vault::get_claimable_balance(signer::address_of(u2), metadata);
+        let prize_u3 = vault::get_claimable_balance(signer::address_of(u3), metadata);
 
-        assert!(prize_u1 == 20, 1); // 100 / 5 = 20
+        assert!(prize_u1 == 20, 1);
         assert!(prize_u2 == 20, 2);
         assert!(prize_u3 == 20, 3);
     }
@@ -424,20 +425,14 @@ module lucky_survivor::game_tests {
         u2: &signer,
         u3: &signer
     ) {
-        // Test: 3 survivors split a 100 unit prize (indivisible)
-        // 100 / 3 = 33 each (floor division), remainder 1 stays in vault
         package_manager::initialize_for_test();
-        vault::init_for_test(deployer);
+        game::init_for_test(deployer, 100);
+        let metadata = test_helpers::setup_funded_vault(deployer, 100);
 
-        game::init_for_test(deployer, 100); // 100 unit prize pool
-
-        // Verify get_round_prizes before game starts (round 0)
-        // Uses round 1 bps (25 bps = 0.25%), consolation = 100 * 25 / 10000 = 0 (floor)
         let (consolation, remaining) = game::get_round_prizes();
-        assert!(consolation == 0, 10); // 100 * 25 / 10000 = 0.25 -> 0 (floor)
-        assert!(remaining == 100, 11); // No spent yet
+        assert!(consolation == 0, 10);
+        assert!(remaining == 100, 11);
 
-        // Bypass min-5 player check by setting players directly
         let players = vector[
             signer::address_of(u1),
             signer::address_of(u2),
@@ -446,29 +441,24 @@ module lucky_survivor::game_tests {
         game::set_players_for_test(players);
         game::set_voting_status_for_test();
 
-        // All 3 vote STOP to trigger split
         game::vote(u1, 0);
         game::vote(u2, 0);
         game::vote(u3, 0);
 
         game::finalize_voting(deployer);
 
-        assert!(game::get_status() == 4, 0); // STATUS_ENDED
+        assert!(game::get_status() == 4, 0);
 
-        // 100 / 3 = 33 each (floor division)
-        let prize_u1 = vault::get_claimable_balance(signer::address_of(u1));
-        let prize_u2 = vault::get_claimable_balance(signer::address_of(u2));
-        let prize_u3 = vault::get_claimable_balance(signer::address_of(u3));
+        let prize_u1 = vault::get_claimable_balance(signer::address_of(u1), metadata);
+        let prize_u2 = vault::get_claimable_balance(signer::address_of(u2), metadata);
+        let prize_u3 = vault::get_claimable_balance(signer::address_of(u3), metadata);
 
-        assert!(prize_u1 == 33, 1); // 100 / 3 = 33
+        assert!(prize_u1 == 33, 1);
         assert!(prize_u2 == 33, 2);
         assert!(prize_u3 == 33, 3);
-        // Remainder of 1 (100 - 99 = 1) stays in vault as acceptable dust
 
-        // Verify get_round_prizes after split
-        // spent_amount is still 0 (split doesn't update it, only reveal_bombs does)
         let (_, remaining_after) = game::get_round_prizes();
-        assert!(remaining_after == 100, 12); // spent_amount unchanged by split
+        assert!(remaining_after == 100, 12);
     }
 
     #[test(
@@ -484,17 +474,15 @@ module lucky_survivor::game_tests {
     ) {
         package_manager::initialize_for_test();
         game::init_for_test(deployer, 1000);
+        test_helpers::setup_funded_vault(deployer, 1000);
 
-        // Test get_deadlines before game starts
         let (round_deadline, vote_deadline) = game::get_deadlines();
         assert!(round_deadline == 0, 0);
         assert!(vote_deadline == 0, 1);
 
-        // Test get_all_bao_owners before game starts (total_bao = 0)
         let bao_owners = game::get_all_bao_owners();
         assert!(bao_owners.length() == 0, 2);
 
-        // Join players and start game
         game::join_game(u1);
         game::join_game(u2);
         game::join_game(u3);
@@ -506,42 +494,63 @@ module lucky_survivor::game_tests {
         );
         game::start_game(deployer, 120);
 
-        // Test get_deadlines after game starts
         let (round_deadline2, _) = game::get_deadlines();
-        assert!(round_deadline2 > 0, 3); // Should have deadline set
+        assert!(round_deadline2 > 0, 3);
 
-        // Test get_all_bao_owners (5 players, all unassigned)
         let bao_owners2 = game::get_all_bao_owners();
         assert!(bao_owners2.length() == 5, 4);
-        assert!(bao_owners2[0] == @0x0, 5); // Unassigned
+        assert!(bao_owners2[0] == @0x0, 5);
 
-        // Choose some bao
         game::choose_bao(u1, 0);
         game::choose_bao(u2, 2);
 
-        // Test get_all_bao_owners with some assigned
         let bao_owners3 = game::get_all_bao_owners();
         assert!(bao_owners3[0] == signer::address_of(u1), 6);
-        assert!(bao_owners3[1] == @0x0, 7); // Unassigned
+        assert!(bao_owners3[1] == @0x0, 7);
         assert!(bao_owners3[2] == signer::address_of(u2), 8);
 
-        // Set voting status and test get_voting_state
         game::set_voting_status_for_test();
 
-        // Initially all missing
         let (stop, cont, missing) = game::get_voting_state();
         assert!(stop == 0, 9);
         assert!(cont == 0, 10);
         assert!(missing == 5, 11);
 
-        // Some votes
-        game::vote(u1, 1); // CONTINUE
-        game::vote(u2, 0); // STOP
-        game::vote(u3, 1); // CONTINUE
+        game::vote(u1, 1);
+        game::vote(u2, 0);
+        game::vote(u3, 1);
 
         let (stop2, cont2, missing2) = game::get_voting_state();
         assert!(stop2 == 1, 12);
         assert!(cont2 == 2, 13);
         assert!(missing2 == 2, 14);
+    }
+
+    #[test(
+        deployer = @deployer, u1 = @0x1, u2 = @0x2, u3 = @0x3, u4 = @0x4, u5 = @0x5
+    )]
+    #[expected_failure(abort_code = 2013, location = lucky_survivor::game)]
+    fun test_start_game_insufficient_vault(
+        deployer: &signer,
+        u1: &signer,
+        u2: &signer,
+        u3: &signer,
+        u4: &signer,
+        u5: &signer
+    ) {
+        package_manager::initialize_for_test();
+        game::init_for_test(deployer, 200);
+        test_helpers::setup_funded_vault(deployer, 50);
+        game::join_game(u1);
+        game::join_game(u2);
+        game::join_game(u3);
+        game::join_game(u4);
+        game::join_game(u5);
+
+        timestamp::set_time_has_started_for_testing(
+            &account::create_signer_for_test(@0x1)
+        );
+
+        game::start_game(deployer, 120);
     }
 }

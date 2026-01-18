@@ -19,8 +19,9 @@ module lucky_survivor::game {
     const STATUS_PENDING: u8 = 0;
     const STATUS_SELECTION: u8 = 1;
     const STATUS_REVEALING: u8 = 2;
-    const STATUS_VOTING: u8 = 3;
-    const STATUS_ENDED: u8 = 4;
+    const STATUS_REVEALED: u8 = 3;
+    const STATUS_VOTING: u8 = 4;
+    const STATUS_ENDED: u8 = 5;
 
     const VOTE_STOP: u8 = 0;
     const VOTE_CONTINUE: u8 = 1;
@@ -43,6 +44,7 @@ module lucky_survivor::game {
     const E_NOT_REGISTERED: u64 = 2018;
     const E_INVALID_CODE: u64 = 2019;
     const E_NAME_NOT_SET: u64 = 2020;
+    const E_NOT_IN_REVEALED: u64 = 2021;
 
     struct Player has store, drop, copy {
         name: String,
@@ -374,9 +376,19 @@ module lucky_survivor::game {
             };
             game.status = STATUS_ENDED;
         } else {
-            start_voting_phase(game);
-            event::emit(RoundEnded { round: game.round - 1, survivors_count });
+            // Stay in REVEALED status - admin will manually start voting
+            game.status = STATUS_REVEALED;
         }
+    }
+
+    /// Admin manually starts voting phase after reveal
+    public entry fun start_voting(admin: &signer) acquires Game {
+        ensure_admin(admin);
+        let game = borrow_global_mut<Game>(@lucky_survivor);
+        assert!(game.status == STATUS_REVEALED, E_NOT_IN_REVEALED);
+
+        start_voting_phase(game);
+        event::emit(RoundEnded { round: game.round, survivors_count: game.players.length() });
     }
 
     public entry fun vote(user: &signer, choice: u8) acquires Game {
@@ -496,6 +508,30 @@ module lucky_survivor::game {
     }
 
     #[view]
+    public fun get_all_players_with_seats(): (vector<address>, vector<String>, vector<bool>, vector<u64>) acquires Game {
+        let game = borrow_global<Game>(@lucky_survivor);
+        let names = vector[];
+        let statuses = vector[];
+        let seats = vector[];
+        let i = 0;
+        let len = game.players.length();
+        while (i < len) {
+            let player = game.players[i];
+            let info = game.player_data.borrow(player);
+            names.push_back(info.name);
+            statuses.push_back(info.acted);
+            let seat = if (info.initial_bao_id.is_some()) {
+                *info.initial_bao_id.borrow()
+            } else {
+                0
+            };
+            seats.push_back(seat);
+            i += 1;
+        };
+        (game.players, names, statuses, seats)
+    }
+
+    #[view]
     public fun get_status(): u8 acquires Game {
         borrow_global<Game>(@lucky_survivor).status
     }
@@ -591,20 +627,46 @@ module lucky_survivor::game {
         (stop_count, continue_count, missing_count)
     }
 
+    // @deprecated Use get_round_victims_with_seats() instead
     #[view]
     public fun get_round_victims(): vector<address> acquires Game {
+        let _game = borrow_global<Game>(@lucky_survivor);
+        vector[]
+    }
+
+    // @deprecated Use get_round_victims_with_seats() instead
+    #[view]
+    public fun get_round_victims_with_names(): (vector<address>, vector<String>) acquires Game {
+        let _game = borrow_global<Game>(@lucky_survivor);
+        (vector[], vector[])
+    }
+
+    #[view]
+    public fun get_round_victims_with_seats(): (vector<address>, vector<String>, vector<u64>) acquires Game {
         let game = borrow_global<Game>(@lucky_survivor);
         let victims = vector[];
+        let names = vector[];
+        let seats = vector[];
         let i = 0;
         let len = game.bomb_indices.length();
         while (i < len) {
             let bomb_idx = game.bomb_indices[i];
             if (game.bao_assignments.contains(bomb_idx)) {
-                victims.push_back(*game.bao_assignments.borrow(bomb_idx));
+                let victim_addr = *game.bao_assignments.borrow(bomb_idx);
+                victims.push_back(victim_addr);
+                let info = game.player_data.borrow(victim_addr);
+                names.push_back(info.name);
+                // Seat number (initial_bao_id is 0-indexed)
+                let seat = if (info.initial_bao_id.is_some()) {
+                    *info.initial_bao_id.borrow()
+                } else {
+                    0
+                };
+                seats.push_back(seat);
             };
             i += 1;
         };
-        victims
+        (victims, names, seats)
     }
 
     fun calculate_winner_prize(game: &Game): u64 {

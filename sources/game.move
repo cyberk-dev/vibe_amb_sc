@@ -586,6 +586,12 @@ module lucky_survivor::game {
     }
 
     #[view]
+    public fun is_eliminated(player: address): bool acquires Game {
+        let game = borrow_global<Game>(@lucky_survivor);
+        game.fixed_players.contains(&player) && !game.players.contains(&player)
+    }
+
+    #[view]
     public fun get_pending_name(player: address): String acquires Game {
         let game = borrow_global<Game>(@lucky_survivor);
         assert!(game.pending_names.contains(player), E_NAME_NOT_SET);

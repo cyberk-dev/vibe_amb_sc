@@ -326,18 +326,31 @@ module lucky_survivor::game {
                 game.elimination_count
             };
 
-        let bombs = vector[];
-        let used = vector[];
-        let i = 0;
-        while (i < bombs_count) {
-            let idx = randomness::u64_range(0, game.total_bao);
-            // Skip
-            while (used.contains(&idx) || !game.bao_assignments.contains(idx)) {
-                idx += 1;
+        // Collect all assigned bao indices
+        let valid_indices = vector[];
+        let i: u64 = 0;
+        while (i < game.total_bao) {
+            if (game.bao_assignments.contains(i)) {
+                valid_indices.push_back(i);
             };
-            bombs.push_back(idx);
-            used.push_back(idx);
             i += 1;
+        };
+
+        // Fisher-Yates shuffle for uniform randomness
+        let len = valid_indices.length();
+        let j = len;
+        while (j > 1) {
+            j -= 1;
+            let rand_idx = randomness::u64_range(0, j + 1);
+            valid_indices.swap(j, rand_idx);
+        };
+
+        // Take first bombs_count as bombs
+        let bombs = vector[];
+        let k: u64 = 0;
+        while (k < bombs_count) {
+            bombs.push_back(valid_indices[k]);
+            k += 1;
         };
 
         game.bomb_indices = bombs;

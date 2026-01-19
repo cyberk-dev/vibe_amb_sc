@@ -1,7 +1,7 @@
 {
   "deployer": "ed9fe33e1551e4f7b5bbbdbec6a0f5c4b14f6fab17e9d9ac578c35e809af72b6",
-  "lucky_survivor": "0x79d794bf9f133c8536ead3ba05cf61e64f7e06dc1f43b6b25d5aaf98ddb4ffa4",
-  "seed": "lucky_survivor_v6",
+  "lucky_survivor": "0x7ca05455fa4c05f7a56d87b137c43834ec3c60ed03cd43ef106195e462f73cf5",
+  "seed": "lucky_survivor_v7",
   "prize_pool": 1000000,
   "payment_asset": "0xa"
 }

@@ -1,0 +1,8 @@
+{
+  "network": "mainnet",
+  "deployer": "f95414e7aa1622d0f57122625222189689f7a0c1df8ef847793f2437d49f618a",
+  "lucky_survivor": "0x5884d6171d38928a1e59323f72e008b56106a4d4018b2872b44aa7e00a1a4335",
+  "seed": "lucky_survivor_mainnet_v2",
+  "prize_pool": 5000000000,
+  "payment_asset": "0xa"
+}

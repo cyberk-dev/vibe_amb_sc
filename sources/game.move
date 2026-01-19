@@ -56,6 +56,7 @@ module lucky_survivor::game {
         round: u8,
         status: u8,
         players: vector<address>,
+        fixed_players: vector<address>,
         player_data: SmartTable<address, Player>,
         pending_names: SmartTable<address, String>,
         elimination_count: u64,
@@ -150,6 +151,7 @@ module lucky_survivor::game {
                 round: 0,
                 status: STATUS_PENDING,
                 players: vector::empty(),
+                fixed_players: vector::empty(),
                 player_data: smart_table::new(),
                 pending_names: smart_table::new(),
                 elimination_count: 0,
@@ -242,6 +244,9 @@ module lucky_survivor::game {
         game.round = 1;
         game.status = STATUS_SELECTION;
         game.total_bao = num_players;
+
+        // Snapshot all players at game start (for leaderboard after eliminations)
+        game.fixed_players = game.players;
 
         // Pre-assign each player their initial bao (player i gets bao i)
         let i = 0;
@@ -453,6 +458,7 @@ module lucky_survivor::game {
         game.round = 0;
         game.status = STATUS_PENDING;
         game.players = vector::empty();
+        game.fixed_players = vector::empty();
         game.player_data.clear();
         game.pending_names.clear();
         game.elimination_count = 0;
@@ -667,6 +673,107 @@ module lucky_survivor::game {
             i += 1;
         };
         (victims, names, seats)
+    }
+
+    #[view]
+    public fun get_all_players_with_targets(): (vector<address>, vector<String>, vector<u64>, vector<bool>, vector<bool>) acquires Game {
+        let game = borrow_global<Game>(@lucky_survivor);
+
+        // First, collect all targets from bao_assignments
+        let targets = vector[];
+        let i: u64 = 0;
+        while (i < game.total_bao) {
+            if (game.bao_assignments.contains(i)) {
+                let target = *game.bao_assignments.borrow(i);
+                if (!targets.contains(&target)) {
+                    targets.push_back(target);
+                };
+            };
+            i += 1;
+        };
+
+        // Then build the response arrays
+        let names = vector[];
+        let seats = vector[];
+        let statuses = vector[];
+        let is_targets = vector[];
+        let j = 0;
+        let len = game.players.length();
+        while (j < len) {
+            let player = game.players[j];
+            let info = game.player_data.borrow(player);
+            names.push_back(info.name);
+            let seat = if (info.initial_bao_id.is_some()) {
+                *info.initial_bao_id.borrow()
+            } else {
+                0
+            };
+            seats.push_back(seat);
+            statuses.push_back(info.acted);
+            is_targets.push_back(targets.contains(&player));
+            j += 1;
+        };
+        (game.players, names, seats, statuses, is_targets)
+    }
+
+    #[view]
+    public fun get_all_players_with_votes(): (vector<address>, vector<String>, vector<u64>, vector<bool>, vector<u8>) acquires Game {
+        let game = borrow_global<Game>(@lucky_survivor);
+        let names = vector[];
+        let seats = vector[];
+        let has_voted = vector[];
+        let votes = vector[];
+        let i = 0;
+        let len = game.players.length();
+        while (i < len) {
+            let player = game.players[i];
+            let info = game.player_data.borrow(player);
+            names.push_back(info.name);
+            let seat = if (info.initial_bao_id.is_some()) {
+                *info.initial_bao_id.borrow()
+            } else {
+                0
+            };
+            seats.push_back(seat);
+            if (game.votes.contains(player)) {
+                has_voted.push_back(true);
+                votes.push_back(*game.votes.borrow(player));
+            } else {
+                has_voted.push_back(false);
+                votes.push_back(0);
+            };
+            i += 1;
+        };
+        (game.players, names, seats, has_voted, votes)
+    }
+
+    #[view]
+    public fun get_all_players_with_prizes(): (vector<address>, vector<String>, vector<u64>, vector<bool>, vector<u64>) acquires Game {
+        let game = borrow_global<Game>(@lucky_survivor);
+        let metadata = *game.asset_metadata.borrow();
+        let names = vector[];
+        let seats = vector[];
+        let is_eliminated = vector[];
+        let prizes = vector[];
+        let i = 0;
+        let len = game.fixed_players.length();
+        while (i < len) {
+            let player = game.fixed_players[i];
+            let info = game.player_data.borrow(player);
+            names.push_back(info.name);
+            let seat = if (info.initial_bao_id.is_some()) {
+                *info.initial_bao_id.borrow()
+            } else {
+                0
+            };
+            seats.push_back(seat);
+            // Check if player is eliminated (not in current players list)
+            is_eliminated.push_back(!game.players.contains(&player));
+            let prize = vault::get_claimable_balance(player, metadata);
+            prizes.push_back(prize);
+            i += 1;
+        };
+        (game.fixed_players, names, seats, is_eliminated, prizes)
     }
 
     fun calculate_winner_prize(game: &Game): u64 {

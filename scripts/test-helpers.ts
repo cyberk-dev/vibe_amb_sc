@@ -17,6 +17,30 @@ export const accountHelpers = {
     return Array(count).fill(0).map(() => Account.generate());
   },
 
+  // Saved player private keys (from .aptos/config.yaml profiles player1-5)
+  PLAYER_KEYS: [
+    "0xf3a4585dcb08ffd8e824373efb805aea85f081bda1d9c35f040ba9c3308e23b8", // player1
+    "0x66e3cbaf87e41af69888d919965c373b2d14b41f3ec61cded36b6b6959128c64", // player2
+    "0x78239ebaf16cf5e759adc505486ceeb20ef968ef8af1cb4ea7a7994184173f2d", // player3
+    "0xdf56399bfa2fa517ce62beef2e582e58bca2e0ab62b718b021bc179bc30f72d1", // player4
+    "0x6e70a79caf12135984eb76029111f49cb764b73e83b78a033f485b6d5a228438", // player5
+  ],
+
+  getPlayer(index: number): Account {
+    if (index < 0 || index >= this.PLAYER_KEYS.length) {
+      throw new Error(`Player index ${index} out of range (0-${this.PLAYER_KEYS.length - 1})`);
+    }
+    return Account.fromPrivateKey({
+      privateKey: new Ed25519PrivateKey(this.PLAYER_KEYS[index]),
+    });
+  },
+
+  getPlayers(count: number): Account[] {
+    return Array(Math.min(count, this.PLAYER_KEYS.length))
+      .fill(0)
+      .map((_, i) => this.getPlayer(i));
+  },
+
   async clawback(players: Account[], admin: Account): Promise<void> {
     for (const player of players) {
       try {
